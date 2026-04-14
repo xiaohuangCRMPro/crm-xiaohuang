@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 
 st.set_page_config(layout="wide")
 
@@ -33,12 +33,36 @@ def safe_read(file):
     return df
 
 # ================= STATE =================
-if "nap" not in st.session_state:
-    st.session_state.nap = None
-if "rut" not in st.session_state:
-    st.session_state.rut = None
-if "login" not in st.session_state:
-    st.session_state.login = None
+for key in ["nap", "rut", "login"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
+
+# ================= MASTER TABLE =================
+def build_master():
+    nap = st.session_state.nap
+    rut = st.session_state.rut
+    login = st.session_state.login
+
+    nap_sum = nap.groupby("user")["amount"].sum().reset_index().rename(columns={"amount": "total_nap"})
+    rut_sum = rut.groupby("user")["amount"].sum().reset_index().rename(columns={"amount": "total_rut"})
+
+    nap_last = nap.groupby("user")["date"].max().reset_index().rename(columns={"date": "last_nap"})
+    login_last = login.groupby("user")["date"].max().reset_index().rename(columns={"date": "last_login"})
+
+    df = nap_sum.merge(rut_sum, on="user", how="outer")
+    df = df.merge(nap_last, on="user", how="left")
+    df = df.merge(login_last, on="user", how="left")
+
+    df.fillna(0, inplace=True)
+
+    df["profit"] = df["total_nap"] - df["total_rut"]
+
+    now = datetime.now()
+
+    df["days_no_nap"] = (now - pd.to_datetime(df["last_nap"], errors="coerce")).dt.days
+    df["days_login"] = (now - pd.to_datetime(df["last_login"], errors="coerce")).dt.days
+
+    return df
 
 # ================= IMPORT =================
 if menu == "📥 数据导入":
@@ -65,13 +89,13 @@ if menu == "📊 总览":
 
     if st.session_state.nap is not None and st.session_state.rut is not None:
 
-        total_nap = st.session_state.nap["amount"].sum()
-        total_rut = st.session_state.rut["amount"].sum()
+        master = build_master()
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
 
-        col1.metric("💰 总充值", int(total_nap))
-        col2.metric("💸 总提现", int(total_rut))
+        col1.metric("💰 总充值", int(master["total_nap"].sum()))
+        col2.metric("💸 总提现", int(master["total_rut"].sum()))
+        col3.metric("📈 总利润", int(master["profit"].sum()))
 
     else:
         st.warning("请先上传数据")
@@ -79,46 +103,30 @@ if menu == "📊 总览":
 # ================= ANALYSIS =================
 if menu == "📊 分析":
 
-    if st.session_state.nap is not None and st.session_state.rut is not None:
-
-        nap = st.session_state.nap
-        rut = st.session_state.rut
-
-        nap_group = nap.groupby("user")["amount"].sum().reset_index()
-        rut_group = rut.groupby("user")["amount"].sum().reset_index()
-
-        df = pd.merge(nap_group, rut_group, on="user", how="outer", suffixes=("_nap", "_rut")).fillna(0)
-        df["profit"] = df["amount_nap"] - df["amount_rut"]
-
-        st.dataframe(df.sort_values("profit", ascending=False), use_container_width=True)
-
-    else:
+    if st.session_state.nap is None or st.session_state.rut is None:
         st.warning("请先上传数据")
+    else:
+        master = build_master()
 
-# ================= CRM CORE =================
+        st.subheader("📊 用户总数据")
+
+        st.dataframe(
+            master.sort_values("profit", ascending=False),
+            use_container_width=True
+        )
+
+# ================= CRM =================
 if menu == "🎯 客户维护":
 
     if st.session_state.nap is None or st.session_state.login is None:
         st.warning("需要充值 + 登录数据")
         st.stop()
 
-    nap = st.session_state.nap
-    login = st.session_state.login
-
-    now = datetime.now()
-
-    # ===== 最近时间 =====
-    nap_recent = nap.groupby("user")["date"].max().reset_index()
-    login_recent = login.groupby("user")["date"].max().reset_index()
-
-    df = pd.merge(nap_recent, login_recent, on="user", how="outer", suffixes=("_nap", "_login"))
-
-    df["days_no_nap"] = (now - df["date_nap"]).dt.days
-    df["days_login"] = (now - df["date_login"]).dt.days
+    df = build_master()
 
     # ===== 分类 =====
     def classify(row):
-        if pd.isna(row["date_nap"]):
+        if row["total_nap"] == 0 and row["days_login"] <= 3:
             return "🔥 活跃未充值"
 
         if row["days_no_nap"] <= 3:
@@ -132,12 +140,7 @@ if menu == "🎯 客户维护":
     df["type"] = df.apply(classify, axis=1)
 
     # ===== VIP =====
-    total_nap = nap.groupby("user")["amount"].sum().reset_index()
-    total_nap.rename(columns={"amount": "total"}, inplace=True)
-
-    df = pd.merge(df, total_nap, on="user", how="left")
-
-    df["vip"] = df["total"].apply(lambda x: "💎 VIP" if x > 10000 else "")
+    df["vip"] = df["total_nap"].apply(lambda x: "💎 VIP" if x > 10000 else "")
 
     # ===== 建议 =====
     def suggest(row):
@@ -163,11 +166,21 @@ if menu == "🎯 客户维护":
 
     df["priority"] = df["type"].map(priority)
 
-    df = df.sort_values(["priority", "total"], ascending=[True, False])
+    df = df.sort_values(["priority", "total_nap"], ascending=[True, False])
 
-    st.subheader("🎯 重点客户")
+    st.subheader("🎯 客户维护核心")
 
     st.dataframe(
-        df[["user", "type", "vip", "days_no_nap", "days_login", "total", "建议"]],
+        df[[
+            "user",
+            "total_nap",
+            "total_rut",
+            "profit",
+            "days_no_nap",
+            "days_login",
+            "type",
+            "vip",
+            "建议"
+        ]],
         use_container_width=True
     )
