@@ -1,145 +1,101 @@
 import streamlit as st
 import pandas as pd
-import io
 
-st.set_page_config(layout="wide")
-
-st.title("🔥 CRM 用户运营系统 VIP")
+st.title("🔥 CRM 系统（真实数据版）")
 
 # ========================
-# 上传
-# ========================
-file = st.file_uploader("📂 上传数据", type=["csv", "xlsx"])
-
-if file:
-    if file.name.endswith(".csv"):
-        df = pd.read_csv(file)
-    else:
-        df = pd.read_excel(file)
-else:
-    st.warning("请上传数据")
-    st.stop()
-
-# ========================
-# ⚙️ RULE CONFIG (VIP🔥)
-# ========================
-st.sidebar.header("⚙️ 规则配置")
-
-drop_threshold = st.sidebar.slider("充值下降阈值", 0.0, 1.0, 0.5)
-risk_threshold = st.sidebar.slider("高风险评分", 0.0, 10.0, 6.0)
-
-# ========================
-# 标签
-# ========================
-def 标签(row):
-    tags = []
-
-    if row["7天充值"] == 0:
-        tags.append("A1")
-
-    if row["历史充值"] > 0 and row["最近7天充值"] == 0:
-        tags.append("A2")
-
-    if row["充值下降比例"] > drop_threshold:
-        tags.append("A3")
-
-    if row["是否高价值用户"] and row["充值下降比例"] > 0.3:
-        tags.append("A4")
-
-    return ",".join(tags)
-
-
-def 优先级(tag):
-    if "A4" in tag:
-        return "P1"
-    if "A2" in tag:
-        return "P1"
-    if "A3" in tag:
-        return "P2"
-    return "P3"
-
-
-def 评分(row):
-    score = 0
-    score += min(row["未充值天数"] * 0.1, 3)
-    score += row["充值下降比例"] * 5
-
-    if row["7天登录天数"] < 2:
-        score += 2
-
-    if row["是否高价值用户"]:
-        score *= 1.5
-
-    return round(score, 2)
-
-
-# ========================
-# 计算
-# ========================
-df["标签"] = df.apply(标签, axis=1)
-df["优先级"] = df["标签"].apply(优先级)
-df["流失评分"] = df.apply(评分, axis=1)
-
-# ========================
-# FILTER
-# ========================
-st.sidebar.header("🎯 筛选")
-
-priority = st.sidebar.multiselect("优先级", ["P1", "P2", "P3"], default=["P1", "P2", "P3"])
-score_filter = st.sidebar.slider("最低评分", 0.0, 10.0, 0.0)
-
-df_f = df[(df["优先级"].isin(priority)) & (df["流失评分"] >= score_filter)]
-
-# ========================
-# KPI
+# 上传 3 文件
 # ========================
 col1, col2, col3 = st.columns(3)
 
-col1.metric("总用户", len(df))
-col2.metric("当前筛选", len(df_f))
-col3.metric("高风险", len(df[df["流失评分"] > risk_threshold]))
+with col1:
+    deposit_file = st.file_uploader("上传充值数据", type=["xlsx"])
+
+with col2:
+    withdraw_file = st.file_uploader("上传提现数据", type=["xlsx"])
+
+with col3:
+    login_file = st.file_uploader("上传登录数据", type=["xlsx"])
+
+if not (deposit_file and withdraw_file and login_file):
+    st.warning("请上传全部3个文件")
+    st.stop()
 
 # ========================
-# 高亮危险用户🔥
+# 读取
 # ========================
-def highlight(row):
-    if row["流失评分"] > risk_threshold:
-        return ['background-color: #ff4d4f'] * len(row)
-    return [''] * len(row)
-
-st.subheader("📋 用户列表")
-
-st.dataframe(df_f.style.apply(highlight, axis=1), use_container_width=True)
+deposit = pd.read_excel(deposit_file)
+withdraw = pd.read_excel(withdraw_file)
+login = pd.read_excel(login_file)
 
 # ========================
-# 选择用户（VIP功能🔥）
+# 重命名字段
 # ========================
-st.subheader("🎯 批量操作")
+deposit.columns = ["uid", "充值金额", "时间"]
+withdraw.columns = ["uid", "提现金额", "时间"]
+login.columns = ["uid", "日期"]
 
-selected_ids = st.multiselect("选择用户UID", df_f["uid"])
-
-if st.button("🔥 发送奖励"):
-    if selected_ids:
-        st.success(f"已对用户 {selected_ids} 发送奖励（模拟）")
-    else:
-        st.warning("请选择用户")
+# 转时间
+deposit["时间"] = pd.to_datetime(deposit["时间"])
+withdraw["时间"] = pd.to_datetime(withdraw["时间"])
+login["日期"] = pd.to_datetime(login["日期"])
 
 # ========================
-# 下载
+# 计算7天充值
 # ========================
-st.subheader("📥 导出")
+today = deposit["时间"].max()
+last7 = today - pd.Timedelta(days=7)
 
-csv = df_f.to_csv(index=False).encode("utf-8")
+deposit_7d = deposit[deposit["时间"] >= last7]
+dep_sum = deposit_7d.groupby("uid")["充值金额"].sum().reset_index()
+dep_sum.columns = ["uid", "7天充值"]
 
-st.download_button(
-    "下载筛选结果",
-    csv,
-    "filtered_users.csv",
-    "text/csv"
+# ========================
+# 计算历史充值
+# ========================
+hist_dep = deposit.groupby("uid")["充值金额"].sum().reset_index()
+hist_dep.columns = ["uid", "历史充值"]
+
+# ========================
+# 登录天数
+# ========================
+login_7d = login[login["日期"] >= last7]
+login_days = login_7d.groupby("uid")["日期"].nunique().reset_index()
+login_days.columns = ["uid", "7天登录天数"]
+
+# ========================
+# 合并
+# ========================
+df = hist_dep.merge(dep_sum, on="uid", how="left")
+df = df.merge(login_days, on="uid", how="left")
+
+df.fillna(0, inplace=True)
+
+# ========================
+# 计算未充值天数
+# ========================
+last_dep_time = deposit.groupby("uid")["时间"].max().reset_index()
+last_dep_time["未充值天数"] = (today - last_dep_time["时间"]).dt.days
+
+df = df.merge(last_dep_time[["uid", "未充值天数"]], on="uid", how="left")
+
+# ========================
+# 简单评分
+# ========================
+df["流失评分"] = (
+    df["未充值天数"] * 0.2 +
+    (df["7天充值"] == 0) * 3 +
+    (df["7天登录天数"] < 2) * 2
 )
 
 # ========================
-# 图表
+# 优先级
 # ========================
-st.subheader("📊 风险分布")
-st.bar_chart(df_f["流失评分"])
+df["优先级"] = df["流失评分"].apply(lambda x: "P1" if x > 5 else "P2" if x > 3 else "P3")
+
+# ========================
+# 显示
+# ========================
+st.dataframe(df, use_container_width=True)
+
+st.bar_chart(df["流失评分"])
