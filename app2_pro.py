@@ -1,59 +1,20 @@
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import io
 
 st.set_page_config(layout="wide")
 
-# ================= UI STYLE =================
-st.markdown("""
-<style>
-.stApp {
-    background: linear-gradient(135deg, #020617, #0f172a);
-    color: white;
-}
+# ================= UI =================
+st.title("🔥 CRM SMART SYSTEM")
 
-section[data-testid="stSidebar"] {
-    background-color: #020617;
-}
-
-h1, h2, h3 {
-    color: #f97316;
-}
-
-.card {
-    background: #111827;
-    padding: 20px;
-    border-radius: 12px;
-    border: 1px solid #374151;
-    text-align: center;
-}
-
-.money {
-    background: linear-gradient(90deg,#065f46,#064e3b);
-    padding: 15px;
-    border-radius: 12px;
-}
-
-.vip {
-    background: linear-gradient(90deg,#78350f,#451a03);
-    padding: 15px;
-    border-radius: 12px;
-}
-
-.sleep {
-    background: #1f2937;
-    padding: 15px;
-    border-radius: 12px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.title("🔥 CRM赚钱系统 PRO MAX")
-
-# ================= MENU =================
-menu = st.sidebar.radio("功能菜单",
-    ["📊 总览","📥 数据上传","📊 分析","🎯 客户管理"]
-)
+menu = st.sidebar.radio("Menu", [
+    "📥 Upload",
+    "📊 Dashboard",
+    "📊 Analysis",
+    "🎯 CRM"
+])
 
 # ================= READ =================
 def read_file(file, t):
@@ -69,9 +30,7 @@ def read_file(file, t):
     if t == "login":
         df.rename(columns={"会员ID":"user","日期":"date"}, inplace=True)
 
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
     return df
 
 # ================= STATE =================
@@ -80,7 +39,7 @@ for k in ["nap","rut","login"]:
         st.session_state[k] = None
 
 # ================= UPLOAD =================
-if menu == "📥 数据上传":
+if menu == "📥 Upload":
 
     nap = st.file_uploader("充值")
     rut = st.file_uploader("提现")
@@ -93,32 +52,34 @@ if menu == "📥 数据上传":
     if login:
         st.session_state.login = read_file(login,"login")
 
-    st.success("数据加载完成")
+    st.success("✅ Done")
 
 # ================= DASHBOARD =================
-if menu == "📊 总览":
+if menu == "📊 Dashboard":
 
-    if st.session_state.nap is None or st.session_state.rut is None:
-        st.warning("先上传数据")
-        st.stop()
-
-    total_nap = st.session_state.nap["amount"].sum()
-    total_rut = st.session_state.rut["amount"].sum()
-
-    c1,c2 = st.columns(2)
-
-    c1.markdown(f'<div class="card"><h2>总充值</h2><h1>{int(total_nap)}</h1></div>', unsafe_allow_html=True)
-    c2.markdown(f'<div class="card"><h2>总提现</h2><h1>{int(total_rut)}</h1></div>', unsafe_allow_html=True)
-
-# ================= ANALYSIS =================
-if menu == "📊 分析":
-
-    if st.session_state.nap is None or st.session_state.rut is None:
-        st.warning("先上传数据")
+    if st.session_state.nap is None:
+        st.warning("Upload data first")
         st.stop()
 
     nap = st.session_state.nap
+    rut = st.session_state.rut if st.session_state.rut is not None else pd.DataFrame()
+
+    total_nap = nap["amount"].sum()
+    total_rut = rut["amount"].sum() if not rut.empty else 0
+
+    c1,c2 = st.columns(2)
+    c1.metric("💰 Total Deposit", int(total_nap))
+    c2.metric("💸 Total Withdraw", int(total_rut))
+
+# ================= ANALYSIS =================
+if menu == "📊 Analysis":
+
+    nap = st.session_state.nap
     rut = st.session_state.rut
+
+    if nap is None or rut is None:
+        st.warning("Upload data first")
+        st.stop()
 
     nap_g = nap.groupby("user")["amount"].sum().reset_index()
     rut_g = rut.groupby("user")["amount"].sum().reset_index()
@@ -129,15 +90,15 @@ if menu == "📊 分析":
     st.dataframe(df.sort_values("profit",ascending=False), use_container_width=True)
 
 # ================= CRM =================
-if menu == "🎯 客户管理":
-
-    if st.session_state.nap is None or st.session_state.login is None:
-        st.warning("需要充值+登录")
-        st.stop()
+if menu == "🎯 CRM":
 
     nap = st.session_state.nap
     login = st.session_state.login
     rut = st.session_state.rut if st.session_state.rut is not None else pd.DataFrame()
+
+    if nap is None or login is None:
+        st.warning("Need nap + login data")
+        st.stop()
 
     now = datetime.now()
 
@@ -172,35 +133,65 @@ if menu == "🎯 客户管理":
         (30 - df["days_login"].clip(0,30))*10
     )
 
-    # ===== 分类 =====
-    def classify(r):
-        if r["nap_total"] == 0 and r["days_login"] <= 3:
-            return "🎯 可转化"
-        if r["days_no_nap"] <= 3:
-            return "✅ 正常"
-        if r["days_no_nap"] <= 7:
-            return "⚠️ 风险"
-        return "❄️ 流失"
+    # ===== RULE =====
+    df["A1_LOGIN_NO_DEPOSIT"] = (df["nap_total"] == 0) & (df["days_login"] <= 3)
+    df["A2_RECENT_DEPOSIT_LOST"] = (df["days_no_nap"] >= 3) & (df["days_no_nap"] <= 7)
+    df["A3_DEPOSIT_DROP"] = (df["profit"] < 0)
+    df["A4_HIGH_VALUE_COOLING"] = (df["nap_total"] > 10000) & (df["days_no_nap"] >= 5)
+    df["B1_LOGIN_OK_NO_REDEPOSIT"] = (df["days_login"] <= 3) & (df["days_no_nap"] >= 2)
 
-    df["type"] = df.apply(classify,axis=1)
+    # ===== PRIORITY =====
+    def priority(row):
+        if row["A1_LOGIN_NO_DEPOSIT"] or row["A2_RECENT_DEPOSIT_LOST"]:
+            return "P1"
+        elif row["A3_DEPOSIT_DROP"] or row["A4_HIGH_VALUE_COOLING"]:
+            return "P2"
+        else:
+            return "P3"
 
-    # ===== 赚钱客户 =====
-    money = df[(df["days_login"]<=3) & (df["days_no_nap"]>=2)]
+    df["priority"] = df.apply(priority, axis=1)
 
-    st.markdown("### 💰 赚钱客户")
-    st.markdown('<div class="money">优先处理</div>', unsafe_allow_html=True)
-    st.dataframe(money.sort_values("score",ascending=False).head(20), use_container_width=True)
+    # ===== ACTION =====
+    def action(row):
+        if row["A1_LOGIN_NO_DEPOSIT"]:
+            return "Gửi KM lần đầu"
+        if row["A2_RECENT_DEPOSIT_LOST"]:
+            return "Call + bonus giữ chân"
+        if row["A3_DEPOSIT_DROP"]:
+            return "Check trải nghiệm"
+        if row["A4_HIGH_VALUE_COOLING"]:
+            return "VIP chăm sóc riêng"
+        if row["B1_LOGIN_OK_NO_REDEPOSIT"]:
+            return "Push nạp lại"
+        return "Theo dõi"
 
-    # ===== VIP =====
-    vip = df[df["nap_total"]>10000]
+    df["action"] = df.apply(action, axis=1)
 
-    st.markdown("### 💎 VIP")
-    st.markdown('<div class="vip">高价值用户</div>', unsafe_allow_html=True)
-    st.dataframe(vip.sort_values("nap_total",ascending=False), use_container_width=True)
+    # ===== FILTER =====
+    st.subheader("🎯 CRM LIST")
 
-    # ===== 流失 =====
-    sleep = df[df["days_no_nap"]>7]
+    p = st.selectbox("Priority", ["ALL","P1","P2","P3"])
 
-    st.markdown("### ❄️ 流失用户")
-    st.markdown('<div class="sleep">需要唤醒</div>', unsafe_allow_html=True)
-    st.dataframe(sleep, use_container_width=True)
+    view = df.copy()
+    if p != "ALL":
+        view = view[view["priority"] == p]
+
+    view = view.sort_values(["priority","score"], ascending=[True,False])
+
+    st.dataframe(view[[
+        "user","nap_total","rut_total",
+        "days_no_nap","days_login",
+        "priority","action"
+    ]], use_container_width=True)
+
+    # ===== EXPORT =====
+    def download_excel(df):
+        output = io.BytesIO()
+        df.to_excel(output, index=False)
+        return output
+
+    st.download_button(
+        "📥 Export Excel",
+        download_excel(view),
+        "crm.xlsx"
+    )
