@@ -1,210 +1,206 @@
 import streamlit as st
 import pandas as pd
-import time
+import datetime
 
-# ================= CONFIG =================
-st.set_page_config(
-    page_title="XiaoHuang CRM",
-    page_icon="🐉",
-    layout="wide"
-)
-
-# ================= STYLE =================
-st.markdown("""
-<style>
-.stApp {
-    background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.9)),
-    url("https://images.unsplash.com/photo-1503264116251-35a269479413");
-    background-size: cover;
-    background-attachment: fixed;
-}
-
-/* LOGIN BOX */
-.login-box {
-    max-width: 400px;
-    margin: auto;
-    margin-top: 120px;
-    background: rgba(255,255,255,0.05);
-    backdrop-filter: blur(10px);
-    padding: 30px;
-    border-radius: 20px;
-    color: white;
-    box-shadow: 0 0 30px rgba(255,75,75,0.5);
-}
-
-/* TITLE */
-.title {
-    text-align:center;
-    font-size:42px;
-    font-weight:bold;
-    color:#ff4b4b;
-}
-
-/* BUTTON */
-.stButton>button {
-    width:100%;
-    border-radius:10px;
-    background:#ff4b4b;
-    color:white;
-    font-size:16px;
-}
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(layout="wide")
 
 # ================= LOGIN =================
 if "login" not in st.session_state:
     st.session_state.login = False
 
 if not st.session_state.login:
-    st.markdown('<div class="title">🐉 XiaoHuang CRM 🐉</div>', unsafe_allow_html=True)
+    st.title("🔐 登录系统")
 
-    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+    u = st.text_input("账号")
+    p = st.text_input("密码", type="password")
 
-    username = st.text_input("👤 Username")
-    password = st.text_input("🔒 Password", type="password")
-
-    if st.button("🚀 Đăng nhập"):
-        if username == "admin" and password == "123":
+    if st.button("登录"):
+        if u == "admin" and p == "123":
             st.session_state.login = True
             st.rerun()
         else:
-            st.error("❌ Sai tài khoản")
+            st.error("错误")
 
-    st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-# ================= MAIN =================
+# ================= NAV =================
+st.markdown("## 🔥 CRM 维护系统")
 
-st.title("🔥 XiaoHuang CRM Dashboard")
+col1,col2,col3,col4,col5 = st.columns(5)
 
-menu = st.sidebar.selectbox("📌 Menu", [
-    "Dashboard",
-    "Upload Data",
-    "Preview",
-    "功能说明"
-])
+if col1.button("📊 Dashboard"):
+    st.session_state.page="dash"
+if col2.button("📥 导入"):
+    st.session_state.page="import"
+if col3.button("📊 分析"):
+    st.session_state.page="analysis"
+if col4.button("🎁 维护"):
+    st.session_state.page="care"
+if col5.button("📜 历史"):
+    st.session_state.page="history"
+
+if "page" not in st.session_state:
+    st.session_state.page="dash"
+
+# ================= IMPORT =================
+if st.session_state.page=="import":
+
+    st.subheader("📥 数据导入")
+
+    nap_file = st.file_uploader("充值", type=["xlsx"])
+    rut_file = st.file_uploader("提现", type=["xlsx"])
+    login_file = st.file_uploader("登录", type=["xlsx"])
+
+    if st.button("🚀 导入"):
+        if nap_file and rut_file and login_file:
+
+            st.session_state.nap = pd.read_excel(nap_file)
+            st.session_state.rut = pd.read_excel(rut_file)
+            st.session_state.login_df = pd.read_excel(login_file)
+
+            st.session_state.history = "已导入 " + str(datetime.datetime.now())
+
+            st.success("✅ 成功")
 
 # ================= DASHBOARD =================
-if menu == "Dashboard":
-    st.subheader("📊 Tổng quan hệ thống")
-    st.info("Upload dữ liệu để bắt đầu phân tích")
+elif st.session_state.page=="dash":
 
-# ================= UPLOAD =================
-elif menu == "Upload Data":
-
-    st.subheader("📂 Upload dữ liệu Excel")
-
-    nap_file = st.file_uploader("📥 File nạp", type=["xlsx"])
-    rut_file = st.file_uploader("📤 File rút", type=["xlsx"])
-    login_file = st.file_uploader("🔑 File login", type=["xlsx"])
-
-    if nap_file and rut_file and login_file:
-
-        progress = st.progress(0)
-        status = st.empty()
-
-        status.text("🚀 Đang xử lý dữ liệu...")
-
-        progress.progress(20)
-        time.sleep(0.5)
-        nap = pd.read_excel(nap_file)
-
-        progress.progress(50)
-        time.sleep(0.5)
-        rut = pd.read_excel(rut_file)
-
-        progress.progress(80)
-        time.sleep(0.5)
-        login_df = pd.read_excel(login_file)
-
-        progress.progress(100)
-        time.sleep(0.3)
-
-        st.session_state.nap = nap
-        st.session_state.rut = rut
-        st.session_state.login_df = login_df
-
-        status.text("✅ Hoàn thành!")
-        st.success("Upload thành công!")
-
-# ================= PREVIEW =================
-elif menu == "Preview":
+    st.subheader("📊 总览")
 
     if "nap" in st.session_state:
 
-        st.subheader("📊 Dữ liệu")
+        nap = st.session_state.nap
+        rut = st.session_state.rut
 
-        col1, col2, col3 = st.columns(3)
+        total_nap = nap["amount"].sum()
+        total_rut = rut["amount"].sum()
 
-        col1.metric("Tổng nạp", st.session_state.nap.shape[0])
-        col2.metric("Tổng rút", st.session_state.rut.shape[0])
-        col3.metric("User login", st.session_state.login_df.shape[0])
+        col1,col2,col3 = st.columns(3)
 
-        st.dataframe(st.session_state.nap.head(), use_container_width=True)
+        col1.metric("总充值", total_nap)
+        col2.metric("总提现", total_rut)
+        col3.metric("净利润", total_nap-total_rut)
 
+# ================= ANALYSIS =================
+elif st.session_state.page=="analysis":
+
+    if "nap" not in st.session_state:
+        st.warning("无数据")
+        st.stop()
+
+    nap = st.session_state.nap
+    rut = st.session_state.rut
+    login = st.session_state.login_df
+
+    now = datetime.datetime.now()
+
+    nap["date"] = pd.to_datetime(nap["date"])
+    rut["date"] = pd.to_datetime(rut["date"])
+    login["date"] = pd.to_datetime(login["date"])
+
+    # ===== GROUP =====
+    nap_g = nap.groupby("user").agg(
+        total_nap=("amount","sum"),
+        nap_count=("amount","count"),
+        last_nap=("date","max")
+    ).reset_index()
+
+    rut_g = rut.groupby("user").agg(
+        total_rut=("amount","sum"),
+        rut_count=("amount","count")
+    ).reset_index()
+
+    login_g = login.groupby("user").agg(
+        last_login=("date","max"),
+        login_count=("date","count")
+    ).reset_index()
+
+    df = nap_g.merge(rut_g, on="user", how="left")
+    df = df.merge(login_g, on="user", how="left")
+    df.fillna(0, inplace=True)
+
+    df["profit"] = df["total_nap"] - df["total_rut"]
+    df["inactive_days"] = (now - df["last_login"]).dt.days
+
+    # ===== TIME WINDOW =====
+    def active(df, days):
+        return df[df["date"] >= now - datetime.timedelta(days=days)]
+
+    nap_3 = active(nap,3).groupby("user").size()
+    nap_7 = active(nap,7).groupby("user").size()
+
+    df["nap_3d"] = df["user"].map(nap_3).fillna(0)
+    df["nap_7d"] = df["user"].map(nap_7).fillna(0)
+
+    # ===== CLASSIFY =====
+    def classify(r):
+
+        if r["total_nap"] == 0:
+            return "❌ 无价值"
+
+        if r["total_nap"] > 10000 and r["nap_7d"]==0:
+            return "🔥 VIP流失"
+
+        if r["nap_count"]>5 and r["rut_count"]>5:
+            return "⚠️ 高频交易"
+
+        if r["login_count"]>5 and r["nap_7d"]==0:
+            return "👀 只登录"
+
+        if r["inactive_days"]>10:
+            return "😴 沉睡"
+
+        if r["profit"]>0:
+            return "💰 盈利"
+
+        return "普通"
+
+    df["分类"] = df.apply(classify,axis=1)
+
+    # ===== PRIORITY =====
+    order = {
+        "🔥 VIP流失":1,
+        "💰 盈利":2,
+        "⚠️ 高频交易":3,
+        "😴 沉睡":4,
+        "👀 只登录":5
+    }
+
+    df["priority"] = df["分类"].map(order)
+
+    df = df.sort_values("priority")
+
+    st.dataframe(df, use_container_width=True)
+
+# ================= CARE =================
+elif st.session_state.page=="care":
+
+    st.subheader("🎁 客户维护")
+
+    if "nap" not in st.session_state:
+        st.warning("无数据")
+        st.stop()
+
+    df = st.session_state.nap.groupby("user")["amount"].sum().reset_index()
+
+    def suggest(x):
+        if x>10000:
+            return "🎁 5%"
+        elif x>3000:
+            return "🎁 2%"
+        else:
+            return "🎁 小奖励"
+
+    df["建议"] = df["amount"].apply(suggest)
+
+    st.dataframe(df)
+
+# ================= HISTORY =================
+elif st.session_state.page=="history":
+
+    st.subheader("📜 导入历史")
+
+    if "history" in st.session_state:
+        st.info(st.session_state.history)
     else:
-        st.warning("⚠️ Chưa upload dữ liệu")
-
-# ================= 功能说明 =================
-elif menu == "功能说明":
-
-    st.title("📘 功能说明 / Mô tả chức năng")
-
-    st.markdown("""
-    ## 🐉 XiaoHuang CRM 系统 / Hệ thống CRM XiaoHuang
-
-    一个轻量级数据分析工具  
-    Công cụ phân tích dữ liệu nhẹ, chạy trực tiếp trên web  
-
-    ---
-
-    ### 🔐 登录系统 / Đăng nhập
-    用户账号密码登录  
-    Người dùng đăng nhập bằng tài khoản  
-
-    ---
-
-    ### 📂 数据上传 / Tải dữ liệu
-    支持上传3个Excel文件  
-    Hỗ trợ 3 file Excel  
-
-    • 充值数据 / Nạp  
-    • 提现数据 / Rút  
-    • 登录数据 / Login  
-
-    ---
-
-    ### 📊 数据统计 / Thống kê
-    自动统计关键数据  
-    Tự động thống kê  
-
-    ---
-
-    ### 📈 数据预览 / Xem dữ liệu
-    显示上传数据  
-    Hiển thị dữ liệu  
-
-    ---
-
-    ### 🎨 界面设计 / Giao diện
-    云背景 + 深色主题  
-    Nền mây + giao diện tối  
-
-    ---
-
-    ### 🚀 系统特点 / Điểm mạnh
-    无需安装软件  
-    Không cần cài đặt  
-
-    支持多用户  
-    Hỗ trợ nhiều người dùng  
-
-    ---
-
-    ### 🔮 后续扩展 / Nâng cấp
-    VIP分类  
-    AI推荐  
-    数据导出  
-    """)
-
-    st.success("🔥 系统持续升级中 / Hệ thống đang nâng cấp...")
+        st.warning("暂无记录")
