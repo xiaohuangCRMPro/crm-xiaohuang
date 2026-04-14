@@ -1,131 +1,114 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 
-st.set_page_config(layout="wide")
-
-# ========================
-# DB
-# ========================
-def get_conn():
-    return sqlite3.connect("crm.db", check_same_thread=False)
-
-def init_db():
-    conn = get_conn()
-    c = conn.cursor()
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS deposit (
-        uid TEXT,
-        amount REAL,
-        time TEXT,
-        UNIQUE(uid, time)
-    )
-    """)
-
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS login (
-        uid TEXT,
-        date TEXT,
-        UNIQUE(uid, date)
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-init_db()
+st.title("🔥 CRM 派发名单工具（快速版）")
 
 # ========================
-# UI
+# 上传
 # ========================
-st.title("🔥 CRM 系统（云版本）")
-
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
-    dep_file = st.file_uploader("充值数据", type=["xlsx"])
+    dep_file = st.file_uploader("充值", type=["xlsx"])
 
 with col2:
-    log_file = st.file_uploader("登录数据", type=["xlsx"])
+    wd_file = st.file_uploader("提现", type=["xlsx"])
+
+with col3:
+    log_file = st.file_uploader("登录", type=["xlsx"])
 
 # ========================
-# BUTTON TRIGGER (VIP🔥)
+# RUN
 # ========================
-if st.button("🚀 更新数据"):
+if st.button("🚀 生成名单"):
 
-    conn = get_conn()
+    if not (dep_file and wd_file and log_file):
+        st.error("上传3个文件")
+        st.stop()
 
-    if dep_file:
-        df = pd.read_excel(dep_file)
-        df.columns = ["uid", "amount", "time"]
+    # 读取
+    dep = pd.read_excel(dep_file)
+    wd = pd.read_excel(wd_file)
+    log = pd.read_excel(log_file)
 
-        df.to_sql("temp_dep", conn, if_exists="replace", index=False)
+    dep.columns = ["uid", "充值", "时间"]
+    wd.columns = ["uid", "提现", "时间"]
+    log.columns = ["uid", "日期"]
 
-        conn.execute("""
-        INSERT OR IGNORE INTO deposit
-        SELECT * FROM temp_dep
-        """)
+    dep["时间"] = pd.to_datetime(dep["时间"])
+    wd["时间"] = pd.to_datetime(wd["时间"])
+    log["日期"] = pd.to_datetime(log["日期"])
 
-    if log_file:
-        df = pd.read_excel(log_file)
-        df.columns = ["uid", "date"]
-
-        df.to_sql("temp_log", conn, if_exists="replace", index=False)
-
-        conn.execute("""
-        INSERT OR IGNORE INTO login
-        SELECT * FROM temp_log
-        """)
-
-    conn.close()
-
-    st.success("✅ 数据已更新（自动去重）")
-
-# ========================
-# LOAD DATA
-# ========================
-conn = get_conn()
-
-deposit = pd.read_sql("SELECT * FROM deposit", conn)
-login = pd.read_sql("SELECT * FROM login", conn)
-
-conn.close()
-
-# ========================
-# ANALYSIS
-# ========================
-if len(deposit) > 0:
-
-    deposit["time"] = pd.to_datetime(deposit["time"])
-    login["date"] = pd.to_datetime(login["date"])
-
-    today = deposit["time"].max()
+    # ========================
+    # 计算
+    # ========================
+    today = dep["时间"].max()
     last7 = today - pd.Timedelta(days=7)
 
-    dep7 = deposit[deposit["time"] >= last7]
-    dep7 = dep7.groupby("uid")["amount"].sum().reset_index()
-    dep7.columns = ["uid", "7天充值"]
+    # 历史充值
+    hist = dep.groupby("uid")["充值"].sum().reset_index()
 
-    hist = deposit.groupby("uid")["amount"].sum().reset_index()
-    hist.columns = ["uid", "历史充值"]
+    # 提现
+    wd_sum = wd.groupby("uid")["提现"].sum().reset_index()
 
-    login7 = login[login["date"] >= last7]
-    login7 = login7.groupby("uid")["date"].nunique().reset_index()
-    login7.columns = ["uid", "7天登录"]
+    # 合并
+    df = hist.merge(wd_sum, on="uid", how="left")
+    df["提现"] = df["提现"].fillna(0)
 
-    df = hist.merge(dep7, on="uid", how="left")
-    df = df.merge(login7, on="uid", how="left")
+    # 净充值
+    df["净充值"] = df["充值"] - df["提现"]
 
-    df.fillna(0, inplace=True)
+    # 7天充值
+    dep7 = dep[dep["时间"] >= last7]
+    dep7 = dep7.groupby("uid")["充值"].sum().reset_index()
+    df = df.merge(dep7, on="uid", how="left")
+    df["充值_y"] = df["充值_y"].fillna(0)
+    df.rename(columns={"充值_y": "7天充值"}, inplace=True)
 
-    df["流失评分"] = (
-        df["7天充值"].apply(lambda x: 3 if x == 0 else 0) +
-        df["7天登录"].apply(lambda x: 2 if x < 2 else 0)
+    # 登录
+    log7 = log[log["日期"] >= last7]
+    log7 = log7.groupby("uid")["日期"].nunique().reset_index()
+    log7.columns = ["uid", "7天登录"]
+    df = df.merge(log7, on="uid", how="left")
+    df["7天登录"] = df["7天登录"].fillna(0)
+
+    # ========================
+    # 分组（核心🔥）
+    # ========================
+    def group(row):
+        if row["净充值"] < 0:
+            return "套利用户"
+
+        if row["7天充值"] == 0 and row["7天登录"] > 0:
+            return "登录未充值"
+
+        if row["充值"] > 1000 and row["7天充值"] == 0:
+            return "高价值流失"
+
+        return "正常"
+
+    df["分组"] = df.apply(group, axis=1)
+
+    # ========================
+    # P1名单
+    # ========================
+    p1 = df[
+        (df["分组"] != "正常")
+    ]
+
+    # ========================
+    # 输出
+    # ========================
+    st.success(f"🔥 找到 {len(p1)} 个需要处理的用户")
+
+    st.dataframe(p1, use_container_width=True)
+
+    # 下载
+    csv = p1.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        "⬇️ 下载名单",
+        csv,
+        "p1_users.csv",
+        "text/csv"
     )
-
-    df["优先级"] = df["流失评分"].apply(lambda x: "P1" if x > 3 else "P2")
-
-    st.dataframe(df, use_container_width=True)
-
-    st.bar_chart(df["流失评分"])
