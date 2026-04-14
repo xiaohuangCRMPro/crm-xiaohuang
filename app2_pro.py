@@ -1,171 +1,118 @@
-import streamlit as st
-import pandas as pd
+from fastapi import FastAPI
+import datetime
+from db import 获取用户数据
+from auto import 发送奖励
 
-st.set_page_config(page_title="CRM维护系统", layout="wide")
+app = FastAPI()
 
-st.title("🔥 CRM 维护系统")
+# ========================
+# 标签规则
+# ========================
+def 获取用户标签(user):
+    标签 = []
 
-# ======================
-# LOAD FUNCTIONS
-# ======================
+    if user["登录天数"] > 0 and user["7天充值"] == 0:
+        标签.append("A1_登录未充值")
 
-def convert_date(df, col):
-    df[col] = df[col].astype(str)
-    df[col] = df[col].str.replace("年","-").str.replace("月","-").str.replace("日","")
-    df[col] = pd.to_datetime(df[col], errors="coerce")
-    return df
+    if user["历史充值"] > 0 and user["最近7天充值"] == 0:
+        标签.append("A2_近期流失")
 
-def load_nap(file):
-    df = pd.read_excel(file)
-    df = df.rename(columns={
-        "会员ID": "user",
-        "支付金额": "amount",
-        "完成时间": "date"
-    })
-    df = convert_date(df, "date")
-    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-    return df
+    if user["充值下降比例"] > 0.5:
+        标签.append("A3_充值下降")
 
-def load_rut(file):
-    df = pd.read_excel(file)
-    df = df.rename(columns={
-        "会员ID": "user",
-        "提现金额": "amount",
-        "完成时间": "date"
-    })
-    df = convert_date(df, "date")
-    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-    return df
+    if user["是否高价值用户"] and user["充值下降比例"] > 0.3:
+        标签.append("A4_高价值降温")
 
-def load_login(file):
-    df = pd.read_excel(file)
-    df = df.rename(columns={
-        "会员ID": "user",
-        "日期": "date"
-    })
-    df = convert_date(df, "date")
-    return df
+    return 标签
 
-# ======================
-# MENU
-# ======================
 
-menu = st.sidebar.selectbox("📂 菜单", [
-    "Dashboard",
-    "导入数据",
-    "分析",
-    "客户维护",
-])
+# ========================
+# 优先级
+# ========================
+def 计算优先级(标签):
+    if "A4_高价值降温" in 标签:
+        return "P1"
+    if "A2_近期流失" in 标签:
+        return "P1"
+    if "A3_充值下降" in 标签:
+        return "P2"
+    return "P3"
 
-# ======================
-# IMPORT DATA
-# ======================
 
-if menu == "导入数据":
+# ========================
+# 流失评分
+# ========================
+def 计算流失评分(user):
+    分数 = 0
 
-    st.header("📥 上传数据")
+    分数 += min(user["未充值天数"] * 0.1, 3)
+    分数 += user["充值下降比例"] * 5
 
-    nap_file = st.file_uploader("上传充值数据", type=["xlsx"])
-    rut_file = st.file_uploader("上传提现数据", type=["xlsx"])
-    login_file = st.file_uploader("上传登录数据", type=["xlsx"])
+    if user["7天登录天数"] < 2:
+        分数 += 2
 
-    if nap_file:
-        st.session_state.nap = load_nap(nap_file)
-        st.success("充值数据已加载")
+    if user["是否高价值用户"]:
+        分数 *= 1.5
 
-    if rut_file:
-        st.session_state.rut = load_rut(rut_file)
-        st.success("提现数据已加载")
+    return round(分数, 2)
 
-    if login_file:
-        st.session_state.login = load_login(login_file)
-        st.success("登录数据已加载")
 
-# ======================
-# DASHBOARD
-# ======================
+# ========================
+# 自动运营策略
+# ========================
+def 自动运营(user, 分数, 优先级):
+    if 分数 > 6:
+        return "发送高额优惠 + 人工跟进"
 
-if menu == "Dashboard":
+    if 优先级 == "P1":
+        return "发送召回奖励"
 
-    st.header("📊 总览")
+    if 优先级 == "P2":
+        return "普通优惠提醒"
 
-    if "nap" in st.session_state:
-        total_nap = st.session_state.nap["amount"].sum()
-        st.metric("总充值", total_nap)
+    return "无需处理"
 
-    if "rut" in st.session_state:
-        total_rut = st.session_state.rut["amount"].sum()
-        st.metric("总提现", total_rut)
 
-# ======================
-# ANALYSIS
-# ======================
+# ========================
+# 主处理
+# ========================
+def 分析用户(user):
+    标签 = 获取用户标签(user)
+    优先级 = 计算优先级(标签)
+    分数 = 计算流失评分(user)
+    操作 = 自动运营(user, 分数, 优先级)
 
-if menu == "分析":
+    return {
+        "uid": user["uid"],
+        "标签": 标签,
+        "优先级": 优先级,
+        "流失评分": 分数,
+        "建议操作": 操作,
+        "时间": str(datetime.datetime.now())
+    }
 
-    st.header("📊 数据分析")
 
-    if "nap" in st.session_state and "rut" in st.session_state:
+# ========================
+# 执行自动运营（赚钱🔥）
+# ========================
+def 执行自动(result):
+    for user in result:
+        if user["流失评分"] > 6:
+            发送奖励(user["uid"])
 
-        df_nap = st.session_state.nap.groupby("user")["amount"].sum()
-        df_rut = st.session_state.rut.groupby("user")["amount"].sum()
 
-        df = pd.concat([df_nap, df_rut], axis=1).fillna(0)
-        df.columns = ["充值", "提现"]
+# ========================
+# API
+# ========================
+@app.get("/analysis")
+def 获取分析结果():
+    users = 获取用户数据()
 
-        df["利润"] = df["充值"] - df["提现"]
+    result = []
+    for user in users:
+        result.append(分析用户(user))
 
-        st.dataframe(df.sort_values("利润", ascending=False))
+    # 自动执行运营
+    执行自动(result)
 
-# ======================
-# CRM MAINTENANCE
-# ======================
-
-if menu == "客户维护":
-
-    st.header("🎁 客户维护")
-
-    if "login" in st.session_state and "nap" in st.session_state:
-
-        now = pd.Timestamp.now()
-
-        login_df = st.session_state.login
-        nap_df = st.session_state.nap
-
-        # 最近3天登录
-        recent_login = login_df[
-            login_df["date"] >= now - pd.Timedelta(days=3)
-        ]
-
-        active_users = set(recent_login["user"])
-        nap_users = set(nap_df["user"])
-
-        # 登录但没充值
-        no_deposit = list(active_users - nap_users)
-
-        st.subheader("🔥 活跃但未充值用户")
-        st.write(no_deposit)
-
-        # 沉睡用户
-        last_login = login_df.groupby("user")["date"].max().reset_index()
-
-        sleep_users = last_login[
-            last_login["date"] < now - pd.Timedelta(days=7)
-        ]
-
-        st.subheader("❄️ 沉睡用户")
-        st.dataframe(sleep_users)
-
-        # VIP
-        vip = nap_df.groupby("user")["amount"].sum().reset_index()
-        vip = vip[vip["amount"] > 1000]
-
-        st.subheader("💎 VIP用户")
-        st.dataframe(vip)
-
-# ======================
-# DEBUG
-# ======================
-
-st.sidebar.write("📌 状态:")
-st.sidebar.write(st.session_state.keys())
+    return result
