@@ -1,206 +1,171 @@
 import streamlit as st
 import pandas as pd
-import datetime
 
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="CRM维护系统", layout="wide")
 
-# ================= LOGIN =================
-if "login" not in st.session_state:
-    st.session_state.login = False
+st.title("🔥 CRM 维护系统")
 
-if not st.session_state.login:
-    st.title("🔐 登录系统")
+# ======================
+# LOAD FUNCTIONS
+# ======================
 
-    u = st.text_input("账号")
-    p = st.text_input("密码", type="password")
+def convert_date(df, col):
+    df[col] = df[col].astype(str)
+    df[col] = df[col].str.replace("年","-").str.replace("月","-").str.replace("日","")
+    df[col] = pd.to_datetime(df[col], errors="coerce")
+    return df
 
-    if st.button("登录"):
-        if u == "admin" and p == "123":
-            st.session_state.login = True
-            st.rerun()
-        else:
-            st.error("错误")
+def load_nap(file):
+    df = pd.read_excel(file)
+    df = df.rename(columns={
+        "会员ID": "user",
+        "支付金额": "amount",
+        "完成时间": "date"
+    })
+    df = convert_date(df, "date")
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+    return df
 
-    st.stop()
+def load_rut(file):
+    df = pd.read_excel(file)
+    df = df.rename(columns={
+        "会员ID": "user",
+        "提现金额": "amount",
+        "完成时间": "date"
+    })
+    df = convert_date(df, "date")
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+    return df
 
-# ================= NAV =================
-st.markdown("## 🔥 CRM 维护系统")
+def load_login(file):
+    df = pd.read_excel(file)
+    df = df.rename(columns={
+        "会员ID": "user",
+        "日期": "date"
+    })
+    df = convert_date(df, "date")
+    return df
 
-col1,col2,col3,col4,col5 = st.columns(5)
+# ======================
+# MENU
+# ======================
 
-if col1.button("📊 Dashboard"):
-    st.session_state.page="dash"
-if col2.button("📥 导入"):
-    st.session_state.page="import"
-if col3.button("📊 分析"):
-    st.session_state.page="analysis"
-if col4.button("🎁 维护"):
-    st.session_state.page="care"
-if col5.button("📜 历史"):
-    st.session_state.page="history"
+menu = st.sidebar.selectbox("📂 菜单", [
+    "Dashboard",
+    "导入数据",
+    "分析",
+    "客户维护",
+])
 
-if "page" not in st.session_state:
-    st.session_state.page="dash"
+# ======================
+# IMPORT DATA
+# ======================
 
-# ================= IMPORT =================
-if st.session_state.page=="import":
+if menu == "导入数据":
 
-    st.subheader("📥 数据导入")
+    st.header("📥 上传数据")
 
-    nap_file = st.file_uploader("充值", type=["xlsx"])
-    rut_file = st.file_uploader("提现", type=["xlsx"])
-    login_file = st.file_uploader("登录", type=["xlsx"])
+    nap_file = st.file_uploader("上传充值数据", type=["xlsx"])
+    rut_file = st.file_uploader("上传提现数据", type=["xlsx"])
+    login_file = st.file_uploader("上传登录数据", type=["xlsx"])
 
-    if st.button("🚀 导入"):
-        if nap_file and rut_file and login_file:
+    if nap_file:
+        st.session_state.nap = load_nap(nap_file)
+        st.success("充值数据已加载")
 
-            st.session_state.nap = pd.read_excel(nap_file)
-            st.session_state.rut = pd.read_excel(rut_file)
-            st.session_state.login_df = pd.read_excel(login_file)
+    if rut_file:
+        st.session_state.rut = load_rut(rut_file)
+        st.success("提现数据已加载")
 
-            st.session_state.history = "已导入 " + str(datetime.datetime.now())
+    if login_file:
+        st.session_state.login = load_login(login_file)
+        st.success("登录数据已加载")
 
-            st.success("✅ 成功")
+# ======================
+# DASHBOARD
+# ======================
 
-# ================= DASHBOARD =================
-elif st.session_state.page=="dash":
+if menu == "Dashboard":
 
-    st.subheader("📊 总览")
+    st.header("📊 总览")
 
     if "nap" in st.session_state:
+        total_nap = st.session_state.nap["amount"].sum()
+        st.metric("总充值", total_nap)
 
-        nap = st.session_state.nap
-        rut = st.session_state.rut
+    if "rut" in st.session_state:
+        total_rut = st.session_state.rut["amount"].sum()
+        st.metric("总提现", total_rut)
 
-        total_nap = nap["amount"].sum()
-        total_rut = rut["amount"].sum()
+# ======================
+# ANALYSIS
+# ======================
 
-        col1,col2,col3 = st.columns(3)
+if menu == "分析":
 
-        col1.metric("总充值", total_nap)
-        col2.metric("总提现", total_rut)
-        col3.metric("净利润", total_nap-total_rut)
+    st.header("📊 数据分析")
 
-# ================= ANALYSIS =================
-elif st.session_state.page=="analysis":
+    if "nap" in st.session_state and "rut" in st.session_state:
 
-    if "nap" not in st.session_state:
-        st.warning("无数据")
-        st.stop()
+        df_nap = st.session_state.nap.groupby("user")["amount"].sum()
+        df_rut = st.session_state.rut.groupby("user")["amount"].sum()
 
-    nap = st.session_state.nap
-    rut = st.session_state.rut
-    login = st.session_state.login_df
+        df = pd.concat([df_nap, df_rut], axis=1).fillna(0)
+        df.columns = ["充值", "提现"]
 
-    now = datetime.datetime.now()
+        df["利润"] = df["充值"] - df["提现"]
 
-    nap["date"] = pd.to_datetime(nap["date"])
-    rut["date"] = pd.to_datetime(rut["date"])
-    login["date"] = pd.to_datetime(login["date"])
+        st.dataframe(df.sort_values("利润", ascending=False))
 
-    # ===== GROUP =====
-    nap_g = nap.groupby("user").agg(
-        total_nap=("amount","sum"),
-        nap_count=("amount","count"),
-        last_nap=("date","max")
-    ).reset_index()
+# ======================
+# CRM MAINTENANCE
+# ======================
 
-    rut_g = rut.groupby("user").agg(
-        total_rut=("amount","sum"),
-        rut_count=("amount","count")
-    ).reset_index()
+if menu == "客户维护":
 
-    login_g = login.groupby("user").agg(
-        last_login=("date","max"),
-        login_count=("date","count")
-    ).reset_index()
+    st.header("🎁 客户维护")
 
-    df = nap_g.merge(rut_g, on="user", how="left")
-    df = df.merge(login_g, on="user", how="left")
-    df.fillna(0, inplace=True)
+    if "login" in st.session_state and "nap" in st.session_state:
 
-    df["profit"] = df["total_nap"] - df["total_rut"]
-    df["inactive_days"] = (now - df["last_login"]).dt.days
+        now = pd.Timestamp.now()
 
-    # ===== TIME WINDOW =====
-    def active(df, days):
-        return df[df["date"] >= now - datetime.timedelta(days=days)]
+        login_df = st.session_state.login
+        nap_df = st.session_state.nap
 
-    nap_3 = active(nap,3).groupby("user").size()
-    nap_7 = active(nap,7).groupby("user").size()
+        # 最近3天登录
+        recent_login = login_df[
+            login_df["date"] >= now - pd.Timedelta(days=3)
+        ]
 
-    df["nap_3d"] = df["user"].map(nap_3).fillna(0)
-    df["nap_7d"] = df["user"].map(nap_7).fillna(0)
+        active_users = set(recent_login["user"])
+        nap_users = set(nap_df["user"])
 
-    # ===== CLASSIFY =====
-    def classify(r):
+        # 登录但没充值
+        no_deposit = list(active_users - nap_users)
 
-        if r["total_nap"] == 0:
-            return "❌ 无价值"
+        st.subheader("🔥 活跃但未充值用户")
+        st.write(no_deposit)
 
-        if r["total_nap"] > 10000 and r["nap_7d"]==0:
-            return "🔥 VIP流失"
+        # 沉睡用户
+        last_login = login_df.groupby("user")["date"].max().reset_index()
 
-        if r["nap_count"]>5 and r["rut_count"]>5:
-            return "⚠️ 高频交易"
+        sleep_users = last_login[
+            last_login["date"] < now - pd.Timedelta(days=7)
+        ]
 
-        if r["login_count"]>5 and r["nap_7d"]==0:
-            return "👀 只登录"
+        st.subheader("❄️ 沉睡用户")
+        st.dataframe(sleep_users)
 
-        if r["inactive_days"]>10:
-            return "😴 沉睡"
+        # VIP
+        vip = nap_df.groupby("user")["amount"].sum().reset_index()
+        vip = vip[vip["amount"] > 1000]
 
-        if r["profit"]>0:
-            return "💰 盈利"
+        st.subheader("💎 VIP用户")
+        st.dataframe(vip)
 
-        return "普通"
+# ======================
+# DEBUG
+# ======================
 
-    df["分类"] = df.apply(classify,axis=1)
-
-    # ===== PRIORITY =====
-    order = {
-        "🔥 VIP流失":1,
-        "💰 盈利":2,
-        "⚠️ 高频交易":3,
-        "😴 沉睡":4,
-        "👀 只登录":5
-    }
-
-    df["priority"] = df["分类"].map(order)
-
-    df = df.sort_values("priority")
-
-    st.dataframe(df, use_container_width=True)
-
-# ================= CARE =================
-elif st.session_state.page=="care":
-
-    st.subheader("🎁 客户维护")
-
-    if "nap" not in st.session_state:
-        st.warning("无数据")
-        st.stop()
-
-    df = st.session_state.nap.groupby("user")["amount"].sum().reset_index()
-
-    def suggest(x):
-        if x>10000:
-            return "🎁 5%"
-        elif x>3000:
-            return "🎁 2%"
-        else:
-            return "🎁 小奖励"
-
-    df["建议"] = df["amount"].apply(suggest)
-
-    st.dataframe(df)
-
-# ================= HISTORY =================
-elif st.session_state.page=="history":
-
-    st.subheader("📜 导入历史")
-
-    if "history" in st.session_state:
-        st.info(st.session_state.history)
-    else:
-        st.warning("暂无记录")
+st.sidebar.write("📌 状态:")
+st.sidebar.write(st.session_state.keys())
