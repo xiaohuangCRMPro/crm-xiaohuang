@@ -1,114 +1,197 @@
 import streamlit as st
 import pandas as pd
 
-st.title("🔥 CRM 派发名单工具（快速版）")
+st.set_page_config(page_title="CRM维护系统", layout="wide")
+
+st.title("🔥 CRM维护系统（稳定版）")
 
 # ========================
-# 上传
+# SAFE LOAD FUNCTION
 # ========================
-col1, col2, col3 = st.columns(3)
 
-with col1:
-    dep_file = st.file_uploader("充值", type=["xlsx"])
+def safe_convert_date(df, col):
+    if col in df.columns:
+        df[col] = df[col].astype(str)
+        df[col] = df[col].str.replace("年","-").str.replace("月","-").str.replace("日","")
+        df[col] = pd.to_datetime(df[col], errors="coerce")
+    return df
 
-with col2:
-    wd_file = st.file_uploader("提现", type=["xlsx"])
+def safe_rename(df, mapping):
+    for k, v in mapping.items():
+        if k in df.columns:
+            df = df.rename(columns={k: v})
+    return df
 
-with col3:
-    log_file = st.file_uploader("登录", type=["xlsx"])
+def load_nap(file):
+    df = pd.read_excel(file)
+
+    df = safe_rename(df, {
+        "会员ID": "user",
+        "支付金额": "amount",
+        "完成时间": "date"
+    })
+
+    df = safe_convert_date(df, "date")
+
+    if "amount" in df.columns:
+        df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+
+    return df
+
+def load_rut(file):
+    df = pd.read_excel(file)
+
+    df = safe_rename(df, {
+        "会员ID": "user",
+        "提现金额": "amount",
+        "完成时间": "date"
+    })
+
+    df = safe_convert_date(df, "date")
+
+    if "amount" in df.columns:
+        df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+
+    return df
+
+def load_login(file):
+    df = pd.read_excel(file)
+
+    df = safe_rename(df, {
+        "会员ID": "user",
+        "日期": "date"
+    })
+
+    df = safe_convert_date(df, "date")
+
+    return df
 
 # ========================
-# RUN
+# MENU
 # ========================
-if st.button("🚀 生成名单"):
 
-    if not (dep_file and wd_file and log_file):
-        st.error("上传3个文件")
-        st.stop()
+menu = st.sidebar.selectbox("📂 菜单", [
+    "📊 Dashboard",
+    "📥 导入数据",
+    "📈 分析",
+    "🎯 客户维护"
+])
 
-    # 读取
-    dep = pd.read_excel(dep_file)
-    wd = pd.read_excel(wd_file)
-    log = pd.read_excel(log_file)
+# ========================
+# IMPORT
+# ========================
 
-    dep.columns = ["uid", "充值", "时间"]
-    wd.columns = ["uid", "提现", "时间"]
-    log.columns = ["uid", "日期"]
+if menu == "📥 导入数据":
 
-    dep["时间"] = pd.to_datetime(dep["时间"])
-    wd["时间"] = pd.to_datetime(wd["时间"])
-    log["日期"] = pd.to_datetime(log["日期"])
+    st.header("📥 上传数据")
 
-    # ========================
-    # 计算
-    # ========================
-    today = dep["时间"].max()
-    last7 = today - pd.Timedelta(days=7)
+    nap_file = st.file_uploader("充值数据", type=["xlsx"])
+    rut_file = st.file_uploader("提现数据", type=["xlsx"])
+    login_file = st.file_uploader("登录数据", type=["xlsx"])
 
-    # 历史充值
-    hist = dep.groupby("uid")["充值"].sum().reset_index()
+    if nap_file:
+        st.session_state.nap = load_nap(nap_file)
+        st.success("✅ 充值数据已加载")
 
-    # 提现
-    wd_sum = wd.groupby("uid")["提现"].sum().reset_index()
+    if rut_file:
+        st.session_state.rut = load_rut(rut_file)
+        st.success("✅ 提现数据已加载")
 
-    # 合并
-    df = hist.merge(wd_sum, on="uid", how="left")
-    df["提现"] = df["提现"].fillna(0)
+    if login_file:
+        st.session_state.login = load_login(login_file)
+        st.success("✅ 登录数据已加载")
 
-    # 净充值
-    df["净充值"] = df["充值"] - df["提现"]
+# ========================
+# DASHBOARD
+# ========================
 
-    # 7天充值
-    dep7 = dep[dep["时间"] >= last7]
-    dep7 = dep7.groupby("uid")["充值"].sum().reset_index()
-    df = df.merge(dep7, on="uid", how="left")
-    df["充值_y"] = df["充值_y"].fillna(0)
-    df.rename(columns={"充值_y": "7天充值"}, inplace=True)
+if menu == "📊 Dashboard":
 
-    # 登录
-    log7 = log[log["日期"] >= last7]
-    log7 = log7.groupby("uid")["日期"].nunique().reset_index()
-    log7.columns = ["uid", "7天登录"]
-    df = df.merge(log7, on="uid", how="left")
-    df["7天登录"] = df["7天登录"].fillna(0)
+    st.header("📊 总览")
 
-    # ========================
-    # 分组（核心🔥）
-    # ========================
-    def group(row):
-        if row["净充值"] < 0:
-            return "套利用户"
+    col1, col2 = st.columns(2)
 
-        if row["7天充值"] == 0 and row["7天登录"] > 0:
-            return "登录未充值"
+    if "nap" in st.session_state:
+        total_nap = st.session_state.nap.get("amount", pd.Series()).sum()
+        col1.metric("总充值", total_nap)
 
-        if row["充值"] > 1000 and row["7天充值"] == 0:
-            return "高价值流失"
+    if "rut" in st.session_state:
+        total_rut = st.session_state.rut.get("amount", pd.Series()).sum()
+        col2.metric("总提现", total_rut)
 
-        return "正常"
+# ========================
+# ANALYSIS
+# ========================
 
-    df["分组"] = df.apply(group, axis=1)
+if menu == "📈 分析":
 
-    # ========================
-    # P1名单
-    # ========================
-    p1 = df[
-        (df["分组"] != "正常")
-    ]
+    st.header("📈 用户利润分析")
 
-    # ========================
-    # 输出
-    # ========================
-    st.success(f"🔥 找到 {len(p1)} 个需要处理的用户")
+    if "nap" in st.session_state and "rut" in st.session_state:
 
-    st.dataframe(p1, use_container_width=True)
+        df_nap = st.session_state.nap.groupby("user")["amount"].sum()
+        df_rut = st.session_state.rut.groupby("user")["amount"].sum()
 
-    # 下载
-    csv = p1.to_csv(index=False).encode("utf-8")
+        df = pd.concat([df_nap, df_rut], axis=1).fillna(0)
+        df.columns = ["充值", "提现"]
 
-    st.download_button(
-        "⬇️ 下载名单",
-        csv,
-        "p1_users.csv",
-        "text/csv"
-    )
+        df["利润"] = df["充值"] - df["提现"]
+
+        st.dataframe(df.sort_values("利润", ascending=False))
+
+    else:
+        st.warning("请先上传数据")
+
+# ========================
+# CRM
+# ========================
+
+if menu == "🎯 客户维护":
+
+    st.header("🎯 客户维护系统")
+
+    if "login" not in st.session_state or "nap" not in st.session_state:
+        st.warning("请先上传数据")
+    else:
+        login_df = st.session_state.login
+        nap_df = st.session_state.nap
+
+        now = pd.Timestamp.now()
+
+        # 最近3天登录
+        recent_login = login_df[
+            login_df["date"] >= now - pd.Timedelta(days=3)
+        ]
+
+        active_users = set(recent_login["user"])
+        nap_users = set(nap_df["user"])
+
+        no_deposit = list(active_users - nap_users)
+
+        st.subheader("🔥 活跃但未充值")
+        st.write(no_deposit)
+
+        # 沉睡
+        last_login = login_df.groupby("user")["date"].max().reset_index()
+
+        sleep = last_login[
+            last_login["date"] < now - pd.Timedelta(days=7)
+        ]
+
+        st.subheader("❄️ 沉睡用户")
+        st.dataframe(sleep)
+
+        # VIP
+        vip = nap_df.groupby("user")["amount"].sum().reset_index()
+        vip = vip[vip["amount"] > 1000]
+
+        st.subheader("💎 VIP用户")
+        st.dataframe(vip)
+
+# ========================
+# DEBUG
+# ========================
+
+st.sidebar.markdown("---")
+st.sidebar.write("⚙️ 状态:")
+st.sidebar.write(list(st.session_state.keys()))
