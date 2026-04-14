@@ -1,198 +1,210 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
-from datetime import datetime
+import time
 
-# ===== CONFIG =====
-st.set_page_config(layout="wide")
+# ================= CONFIG =================
+st.set_page_config(
+    page_title="XiaoHuang CRM",
+    page_icon="🐉",
+    layout="wide"
+)
 
-# ===== STYLE =====
+# ================= STYLE =================
 st.markdown("""
 <style>
 .stApp {
-    background: linear-gradient(135deg,#020617,#0f172a);
-    color: white;
+    background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.9)),
+    url("https://images.unsplash.com/photo-1503264116251-35a269479413");
+    background-size: cover;
+    background-attachment: fixed;
 }
 
-/* HEADER */
+/* LOGIN BOX */
+.login-box {
+    max-width: 400px;
+    margin: auto;
+    margin-top: 120px;
+    background: rgba(255,255,255,0.05);
+    backdrop-filter: blur(10px);
+    padding: 30px;
+    border-radius: 20px;
+    color: white;
+    box-shadow: 0 0 30px rgba(255,75,75,0.5);
+}
+
+/* TITLE */
 .title {
     text-align:center;
-    padding:15px;
-    font-size:32px;
+    font-size:42px;
     font-weight:bold;
-    color:#f97316;
-}
-
-/* MENU */
-.menu-btn button {
-    width: 100%;
-    height: 45px;
-    border-radius: 10px;
-    background: #111827;
-    color: #9ca3af;
-    border: 1px solid #1f2937;
-    font-weight: 600;
-}
-
-.active-btn button {
-    background: linear-gradient(90deg,#f97316,#fb7185);
-    color: white !important;
-    border: none;
-}
-
-/* CARD */
-.card {
-    padding:20px;
-    border-radius:15px;
-    background:#111827;
-    text-align:center;
-    font-size:20px;
+    color:#ff4b4b;
 }
 
 /* BUTTON */
 .stButton>button {
-    background: linear-gradient(90deg,#f97316,#fb7185);
+    width:100%;
     border-radius:10px;
+    background:#ff4b4b;
     color:white;
-    font-weight:bold;
-}
-
-/* TABLE */
-[data-testid="stDataFrame"] {
-    border-radius:10px;
+    font-size:16px;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ===== LOGIN =====
+# ================= LOGIN =================
 if "login" not in st.session_state:
     st.session_state.login = False
 
 if not st.session_state.login:
-    st.markdown("<h2 style='text-align:center'>🔐 登录系统</h2>", unsafe_allow_html=True)
-    user = st.text_input("账号")
-    pw = st.text_input("密码", type="password")
+    st.markdown('<div class="title">🐉 XiaoHuang CRM 🐉</div>', unsafe_allow_html=True)
 
-    if st.button("登录"):
-        if user == "xiaohuang" and pw == "aa123456":
+    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+
+    username = st.text_input("👤 Username")
+    password = st.text_input("🔒 Password", type="password")
+
+    if st.button("🚀 Đăng nhập"):
+        if username == "admin" and password == "123":
             st.session_state.login = True
             st.rerun()
         else:
-            st.error("Sai tài khoản")
+            st.error("❌ Sai tài khoản")
 
+    st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-# ===== HEADER =====
-st.markdown("<div class='title'>🔥 XiaoHuang CRM Pro 🔥</div>", unsafe_allow_html=True)
+# ================= MAIN =================
 
-# ===== MENU =====
-if "menu" not in st.session_state:
-    st.session_state.menu = "Dashboard"
+st.title("🔥 XiaoHuang CRM Dashboard")
 
-def set_menu(x):
-    st.session_state.menu = x
+menu = st.sidebar.selectbox("📌 Menu", [
+    "Dashboard",
+    "Upload Data",
+    "Preview",
+    "功能说明"
+])
 
-menus = ["Dashboard","Import","Analysis","P1","History"]
-icons = ["📊","📥","🧠","🔥","📅"]
-
-cols = st.columns(5)
-for i,m in enumerate(menus):
-    with cols[i]:
-        cls = "active-btn" if st.session_state.menu==m else "menu-btn"
-        st.markdown(f"<div class='{cls}'>", unsafe_allow_html=True)
-        if st.button(f"{icons[i]} {m}"):
-            set_menu(m)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-menu = st.session_state.menu
-
-# ===== DB =====
-conn = sqlite3.connect("data.db", check_same_thread=False)
-cursor = conn.cursor()
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS history (
-    uid TEXT,
-    nap REAL,
-    rut REAL,
-    login TEXT,
-    days_no_login REAL,
-    标签 TEXT,
-    priority TEXT,
-    AI建议 TEXT,
-    date TEXT
-)
-""")
-conn.commit()
-
-# ===== IMPORT =====
-if menu == "Import":
-    st.title("📥 导入数据")
-
-    nap_file = st.file_uploader("充值")
-    rut_file = st.file_uploader("提现")
-    login_file = st.file_uploader("登录")
-
-    if st.button("🚀 运行分析"):
-        with st.spinner("Đang xử lý siêu cấp..."):
-            nap = pd.read_excel(nap_file)
-            rut = pd.read_excel(rut_file)
-            login = pd.read_excel(login_file)
-
-            nap.columns = ["uid","nap","date"]
-            rut.columns = ["uid","rut","date"]
-            login.columns = ["uid","login"]
-
-            df = nap.merge(rut, on="uid", how="outer")
-            df = df.merge(login, on="uid", how="outer")
-
-            df.fillna(0, inplace=True)
-
-            df["login"] = pd.to_datetime(df["login"], errors="coerce")
-            df["days_no_login"] = (pd.Timestamp.now() - df["login"]).dt.days
-
-            df["标签"] = "正常"
-            df.loc[df["days_no_login"] > 3, "标签"] = "流失风险"
-            df.loc[(df["nap"]>1000)&(df["rut"]>0),"标签"]="VIP流失"
-
-            df["priority"] = "P3"
-            df.loc[df["标签"]!="正常","priority"]="P1"
-
-            df["AI建议"]="维护"
-            df.loc[df["标签"]=="流失风险","AI建议"]="发奖励拉回"
-            df.loc[df["标签"]=="VIP流失","AI建议"]="人工联系+优惠"
-
-            df["date"]=str(datetime.now())
-
-            df.to_sql("history", conn, if_exists="append", index=False)
-
-        st.success("🔥 完成")
-
-# ===== LOAD =====
-df = pd.read_sql("SELECT * FROM history", conn)
-
-# ===== DASHBOARD =====
+# ================= DASHBOARD =================
 if menu == "Dashboard":
-    st.title("📊 Dashboard")
+    st.subheader("📊 Tổng quan hệ thống")
+    st.info("Upload dữ liệu để bắt đầu phân tích")
 
-    c1,c2,c3,c4 = st.columns(4)
+# ================= UPLOAD =================
+elif menu == "Upload Data":
 
-    c1.markdown(f"<div class='card'>👤 用户<br>{df['uid'].nunique()}</div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='card'>🔥 P1<br>{(df['priority']=='P1').sum()}</div>", unsafe_allow_html=True)
-    c3.markdown(f"<div class='card'>💰 VIP<br>{(df['标签']=='VIP流失').sum()}</div>", unsafe_allow_html=True)
-    c4.markdown(f"<div class='card'>⚠️ 风险<br>{(df['标签']=='流失风险').sum()}</div>", unsafe_allow_html=True)
+    st.subheader("📂 Upload dữ liệu Excel")
 
-# ===== ANALYSIS =====
-if menu == "Analysis":
-    st.title("🧠 分析")
-    st.dataframe(df, use_container_width=True)
+    nap_file = st.file_uploader("📥 File nạp", type=["xlsx"])
+    rut_file = st.file_uploader("📤 File rút", type=["xlsx"])
+    login_file = st.file_uploader("🔑 File login", type=["xlsx"])
 
-# ===== P1 =====
-if menu == "P1":
-    st.title("🔥 高优先级")
-    st.dataframe(df[df["priority"]=="P1"], use_container_width=True)
+    if nap_file and rut_file and login_file:
 
-# ===== HISTORY =====
-if menu == "History":
-    st.title("📅 历史")
-    st.dataframe(df, use_container_width=True)
+        progress = st.progress(0)
+        status = st.empty()
+
+        status.text("🚀 Đang xử lý dữ liệu...")
+
+        progress.progress(20)
+        time.sleep(0.5)
+        nap = pd.read_excel(nap_file)
+
+        progress.progress(50)
+        time.sleep(0.5)
+        rut = pd.read_excel(rut_file)
+
+        progress.progress(80)
+        time.sleep(0.5)
+        login_df = pd.read_excel(login_file)
+
+        progress.progress(100)
+        time.sleep(0.3)
+
+        st.session_state.nap = nap
+        st.session_state.rut = rut
+        st.session_state.login_df = login_df
+
+        status.text("✅ Hoàn thành!")
+        st.success("Upload thành công!")
+
+# ================= PREVIEW =================
+elif menu == "Preview":
+
+    if "nap" in st.session_state:
+
+        st.subheader("📊 Dữ liệu")
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric("Tổng nạp", st.session_state.nap.shape[0])
+        col2.metric("Tổng rút", st.session_state.rut.shape[0])
+        col3.metric("User login", st.session_state.login_df.shape[0])
+
+        st.dataframe(st.session_state.nap.head(), use_container_width=True)
+
+    else:
+        st.warning("⚠️ Chưa upload dữ liệu")
+
+# ================= 功能说明 =================
+elif menu == "功能说明":
+
+    st.title("📘 功能说明 / Mô tả chức năng")
+
+    st.markdown("""
+    ## 🐉 XiaoHuang CRM 系统 / Hệ thống CRM XiaoHuang
+
+    一个轻量级数据分析工具  
+    Công cụ phân tích dữ liệu nhẹ, chạy trực tiếp trên web  
+
+    ---
+
+    ### 🔐 登录系统 / Đăng nhập
+    用户账号密码登录  
+    Người dùng đăng nhập bằng tài khoản  
+
+    ---
+
+    ### 📂 数据上传 / Tải dữ liệu
+    支持上传3个Excel文件  
+    Hỗ trợ 3 file Excel  
+
+    • 充值数据 / Nạp  
+    • 提现数据 / Rút  
+    • 登录数据 / Login  
+
+    ---
+
+    ### 📊 数据统计 / Thống kê
+    自动统计关键数据  
+    Tự động thống kê  
+
+    ---
+
+    ### 📈 数据预览 / Xem dữ liệu
+    显示上传数据  
+    Hiển thị dữ liệu  
+
+    ---
+
+    ### 🎨 界面设计 / Giao diện
+    云背景 + 深色主题  
+    Nền mây + giao diện tối  
+
+    ---
+
+    ### 🚀 系统特点 / Điểm mạnh
+    无需安装软件  
+    Không cần cài đặt  
+
+    支持多用户  
+    Hỗ trợ nhiều người dùng  
+
+    ---
+
+    ### 🔮 后续扩展 / Nâng cấp
+    VIP分类  
+    AI推荐  
+    数据导出  
+    """)
+
+    st.success("🔥 系统持续升级中 / Hệ thống đang nâng cấp...")
