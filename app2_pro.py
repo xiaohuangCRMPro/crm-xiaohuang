@@ -1,160 +1,87 @@
-const express = require('express');
-const { Pool } = require('pg');
-const multer = require('multer');
-const XLSX = require('xlsx');
-const cors = require('cors');
+import streamlit as st
+import pandas as pd
 
-const app = express();
-app.use(express.json());
-app.use(cors());
+st.set_page_config(page_title="后台管理系统", layout="wide")
 
-const pool = new Pool({
-  user: 'postgres',
-  password: '123456',
-  host: 'localhost',
-  port: 5432,
-  database: 'crm'
-});
+st.title("后台管理系统")
 
-const upload = multer({ dest: 'uploads/' });
+# ========================
+# 上传文件
+# ========================
+st.header("上传数据")
 
-/* =========================
-   上传数据
-========================= */
-app.post('/upload', upload.single('file'), async (req, res) => {
-  const wb = XLSX.readFile(req.file.path);
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const data = XLSX.utils.sheet_to_json(sheet);
+uploaded_file = st.file_uploader("上传 Excel 文件", type=["xlsx", "csv"])
 
-  for (let row of data) {
-    const { user_id, deposit, withdraw, login_count } = row;
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+    st.write("数据预览:")
+    st.dataframe(df)
 
-    if (deposit > 0) {
-      await pool.query(
-        `INSERT INTO transactions(user_id,type,amount) VALUES($1,'deposit',$2)`,
-        [user_id, deposit]
-      );
-    }
+    # ========================
+    # 处理数据
+    # ========================
+    df["净值"] = df["deposit"] - df["withdraw"]
 
-    if (withdraw > 0) {
-      await pool.query(
-        `INSERT INTO transactions(user_id,type,amount) VALUES($1,'withdraw',$2)`,
-        [user_id, withdraw]
-      );
-    }
+    # 计算不活跃天数（假设有 last_login）
+    if "last_login" in df.columns:
+        df["last_login"] = pd.to_datetime(df["last_login"])
+        df["不登录天数"] = (pd.Timestamp.now() - df["last_login"]).dt.days
+    else:
+        df["不登录天数"] = 0
 
-    for (let i = 0; i < login_count; i++) {
-      await pool.query(
-        `INSERT INTO login_logs(user_id) VALUES($1)`,
-        [user_id]
-      );
-    }
-  }
+    # ========================
+    # 分类
+    # ========================
+    def classify(row):
+        if row["deposit"] > 50000 and row["不登录天数"] <= 3:
+            return "VIP用户"
+        elif row["不登录天数"] <= 3:
+            return "活跃用户"
+        elif row["不登录天数"] <= 7:
+            return "警告用户"
+        elif row["withdraw"] > row["deposit"]:
+            return "风险用户"
+        else:
+            return "流失用户"
 
-  res.json({ message: '上传成功' });
-});
+    df["用户等级"] = df.apply(classify, axis=1)
 
-/* =========================
-   用户列表
-========================= */
-app.get('/users', async (req, res) => {
-  const result = await pool.query(`
-    SELECT *,
-    DATE_PART('day', NOW() - last_login_time) AS 不登录天数
-    FROM users
-  `);
+    # ========================
+    # 奖金建议
+    # ========================
+    def bonus(row):
+        if row["不登录天数"] <= 3:
+            return row["deposit"] * 0.05
+        elif row["不登录天数"] <= 7:
+            return row["deposit"] * 0.1
+        else:
+            return row["deposit"] * 0.2
 
-  res.json({
-    message: '用户列表',
-    data: result.rows
-  });
-});
+    df["建议奖金"] = df.apply(bonus, axis=1)
 
-/* =========================
-   重新计算
-========================= */
-app.post('/recalculate', async (req, res) => {
-  await pool.query(`
-    UPDATE users u SET
-    total_deposit = (
-      SELECT COALESCE(SUM(amount),0)
-      FROM transactions WHERE user_id=u.user_id AND type='deposit'
-    ),
-    total_withdraw = (
-      SELECT COALESCE(SUM(amount),0)
-      FROM transactions WHERE user_id=u.user_id AND type='withdraw'
-    ),
-    last_login_time = (
-      SELECT MAX(login_time)
-      FROM login_logs WHERE user_id=u.user_id
+    # ========================
+    # 显示结果
+    # ========================
+    st.header("处理结果")
+    st.dataframe(df)
+
+    # ========================
+    # 筛选
+    # ========================
+    st.header("筛选用户")
+
+    days = st.slider("不登录天数 >=", 0, 30, 3)
+
+    filtered = df[df["不登录天数"] >= days]
+
+    st.dataframe(filtered)
+
+    # ========================
+    # 下载
+    # ========================
+    st.download_button(
+        "下载结果",
+        df.to_csv(index=False).encode("utf-8"),
+        "result.csv",
+        "text/csv"
     )
-  `);
-
-  res.json({ message: '计算完成' });
-});
-
-/* =========================
-   分类
-========================= */
-app.get('/classify', async (req, res) => {
-  const result = await pool.query(`
-    SELECT *,
-    DATE_PART('day', NOW() - last_login_time) AS days
-    FROM users
-  `);
-
-  const data = result.rows.map(u => {
-    let level = '流失用户';
-
-    if (u.total_deposit > 50000 && u.days <= 3) level = 'VIP用户';
-    else if (u.days <= 3) level = '活跃用户';
-    else if (u.days <= 7) level = '警告用户';
-    if (u.total_withdraw > u.total_deposit) level = '风险用户';
-
-    return {
-      用户ID: u.user_id,
-      总充值: u.total_deposit,
-      总提现: u.total_withdraw,
-      不登录天数: u.days,
-      用户等级: level
-    };
-  });
-
-  res.json({
-    message: '分类结果',
-    data
-  });
-});
-
-/* =========================
-   奖金建议
-========================= */
-app.get('/bonus', async (req, res) => {
-  const result = await pool.query(`
-    SELECT u.user_id,
-           u.total_deposit,
-           DATE_PART('day', NOW() - u.last_login_time) AS days,
-           r.percent
-    FROM users u
-    JOIN bonus_rules r
-    ON DATE_PART('day', NOW() - u.last_login_time)
-    BETWEEN r.min_days AND r.max_days
-  `);
-
-  const data = result.rows.map(u => ({
-    用户ID: u.user_id,
-    建议奖金: (u.total_deposit * u.percent / 100).toFixed(2)
-  }));
-
-  res.json({
-    message: '奖金建议',
-    data
-  });
-});
-
-/* =========================
-   启动
-========================= */
-app.listen(3000, () => {
-  console.log('后台运行 http://localhost:3000');
-});
