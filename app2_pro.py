@@ -8,10 +8,9 @@ st.title("🔥 后台管理系统（运营版）")
 DATA_FILE = "history.csv"
 
 # ======================
-# TIMEZONE ẤN ĐỘ
+# TIME (KHÔNG DÙNG TZ TRỰC TIẾP)
 # ======================
-now = pd.Timestamp.now(tz="Asia/Kolkata")
-today = now.date()
+now = pd.Timestamp.now()
 
 # ======================
 # LOAD HISTORY
@@ -35,7 +34,7 @@ def fix_date(col):
     )
 
 # ======================
-# UPLOAD (CHỈ UPDATE)
+# UPLOAD
 # ======================
 st.header("📂 上传今日数据")
 
@@ -64,7 +63,7 @@ if deposit_file and withdraw_file and login_file:
         df_withdraw = df_withdraw.drop_duplicates()
         df_login = df_login.drop_duplicates()
 
-        # 汇总今日数据
+        # 汇总今日
         dep = df_deposit.groupby("user_id")["deposit"].sum().reset_index()
         wd = df_withdraw.groupby("user_id")["withdraw"].sum().reset_index()
         lg = df_login.groupby("user_id")["login_time"].max().reset_index()
@@ -72,7 +71,7 @@ if deposit_file and withdraw_file and login_file:
         df_today = dep.merge(wd, on="user_id", how="outer")
         df_today = df_today.merge(lg, on="user_id", how="outer")
 
-        # ===== 合并历史 =====
+        # 合并历史
         df_all = pd.concat([history_df, df_today])
 
         df_all = df_all.groupby("user_id").agg({
@@ -86,18 +85,24 @@ if deposit_file and withdraw_file and login_file:
         st.success("✅ 数据已更新")
 
 # ======================
-# 读取最新数据
+# LOAD FINAL DATA
 # ======================
 if os.path.exists(DATA_FILE):
 
     df = pd.read_csv(DATA_FILE)
+
+    # 👉 FIX datetime chuẩn (KHÔNG timezone để tránh lỗi)
     df["login_time"] = pd.to_datetime(df["login_time"], errors="coerce")
 
-    # ===== 不登录天数 =====
+    # ======================
+    # 不登录天数 (KHÔNG LỖI)
+    # ======================
     df["不登录天数"] = (now - df["login_time"]).dt.days
     df["不登录天数"] = df["不登录天数"].fillna(999)
 
-    # ===== VIP =====
+    # ======================
+    # VIP
+    # ======================
     def vip(x):
         if x > 100000: return "VIP5"
         elif x > 50000: return "VIP4"
@@ -108,7 +113,9 @@ if os.path.exists(DATA_FILE):
 
     df["VIP等级"] = df["deposit"].apply(vip)
 
-    # ===== 风控 =====
+    # ======================
+    # 风控
+    # ======================
     def risk(row):
         if row["deposit"] < 100 and row["不登录天数"] < 1:
             return "羊毛党"
@@ -118,7 +125,9 @@ if os.path.exists(DATA_FILE):
 
     df["风险标签"] = df.apply(risk, axis=1)
 
-    # ===== 等级 =====
+    # ======================
+    # 等级
+    # ======================
     def classify(row):
         if row["不登录天数"] >= 3:
             return "流失"
@@ -129,7 +138,7 @@ if os.path.exists(DATA_FILE):
     df["等级"] = df.apply(classify, axis=1)
 
     # ======================
-    # 🎯 冻结彩金任务 (核心)
+    # 🎯 冻结彩金任务
     # ======================
     tiers = [100,300,1000]
 
@@ -138,13 +147,10 @@ if os.path.exists(DATA_FILE):
         if row["风险标签"] == "羊毛党":
             return []
 
-        # VIP
         if row["VIP等级"] in ["VIP4","VIP5"]:
             rewards = [10,30,120]
-        # 风险
         elif row["风险标签"] == "高风险":
             rewards = [3,10,50]
-        # 普通
         else:
             rewards = [5,20,90]
 
@@ -172,18 +178,16 @@ if os.path.exists(DATA_FILE):
     df["任务"] = df.apply(task_plan, axis=1)
 
     # ======================
-    # 🎯 今日需要跟进
+    # 今日需跟进
     # ======================
     def need_follow(row):
 
         if row["风险标签"] == "羊毛党":
             return False
 
-        # gần mốc
         if row["deposit"] < 300 and row["deposit"] > 100:
             return True
 
-        # sắp bỏ
         if row["不登录天数"] >= 2:
             return True
 
@@ -192,7 +196,7 @@ if os.path.exists(DATA_FILE):
     df["今日需跟进"] = df.apply(need_follow, axis=1)
 
     # ======================
-    # 📊 Dashboard
+    # DASHBOARD
     # ======================
     st.header("📊 今日概况")
 
@@ -202,17 +206,13 @@ if os.path.exists(DATA_FILE):
     c3.metric("需跟进用户", int(df["今日需跟进"].sum()))
 
     # ======================
-    # 🔥 今日跟进用户
+    # 跟进用户
     # ======================
     st.header("🔥 今日需跟进用户")
 
     follow_df = df[df["今日需跟进"] == True]
-
     st.dataframe(follow_df)
 
-    # ======================
-    # 📥 导出
-    # ======================
     st.download_button(
         "📥 下载今日跟进用户",
         follow_df.to_csv(index=False).encode("utf-8"),
@@ -221,15 +221,13 @@ if os.path.exists(DATA_FILE):
     )
 
     # ======================
-    # 🚨 风险
+    # 风险
     # ======================
     st.header("⚠️ 风险用户")
-
     st.dataframe(df[df["风险标签"] != "正常"])
 
     # ======================
-    # 📂 全部
+    # 全部
     # ======================
     st.header("全部数据")
-
     st.dataframe(df)
