@@ -3,7 +3,7 @@ import pandas as pd
 import os
 
 st.set_page_config(layout="wide")
-st.title("🔥 后台管理系统（运营版）")
+st.title("🔥 后台管理系统（丫丫是猪 运营版）")
 
 DATA_FILE = "history.csv"
 
