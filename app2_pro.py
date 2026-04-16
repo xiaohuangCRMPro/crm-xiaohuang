@@ -3,12 +3,18 @@ import pandas as pd
 import os
 
 st.set_page_config(layout="wide")
-st.title("🔥 后台管理系统 PRO")
+st.title("🔥 后台管理系统（运营版）")
 
 DATA_FILE = "history.csv"
 
 # ======================
-# Load history
+# TIMEZONE ẤN ĐỘ
+# ======================
+now = pd.Timestamp.now(tz="Asia/Kolkata")
+today = now.date()
+
+# ======================
+# LOAD HISTORY
 # ======================
 if os.path.exists(DATA_FILE):
     history_df = pd.read_csv(DATA_FILE)
@@ -17,7 +23,7 @@ else:
     history_df = pd.DataFrame()
 
 # ======================
-# Fix date
+# FIX DATE
 # ======================
 def fix_date(col):
     return pd.to_datetime(
@@ -29,20 +35,17 @@ def fix_date(col):
     )
 
 # ======================
-# Upload
+# UPLOAD (CHỈ UPDATE)
 # ======================
-st.header("📂 上传数据")
+st.header("📂 上传今日数据")
 
 deposit_file = st.file_uploader("充值", type=["xlsx"])
 withdraw_file = st.file_uploader("提现", type=["xlsx"])
 login_file = st.file_uploader("登录", type=["xlsx"])
 
-# ======================
-# Start
-# ======================
 if deposit_file and withdraw_file and login_file:
 
-    if st.button("🚀 开始分析"):
+    if st.button("🚀 更新数据"):
 
         df_deposit = pd.read_excel(deposit_file)
         df_withdraw = pd.read_excel(withdraw_file)
@@ -61,142 +64,172 @@ if deposit_file and withdraw_file and login_file:
         df_withdraw = df_withdraw.drop_duplicates()
         df_login = df_login.drop_duplicates()
 
-        # ===== 7天数据 =====
-        now = pd.Timestamp.now()
-
-        login_7 = df_login[df_login["login_time"] >= now - pd.Timedelta(days=7)]
-        login_7 = login_7.groupby("user_id").size().reset_index(name="login_7_days")
-
-        dep_7 = df_deposit[df_deposit["time"] >= now - pd.Timedelta(days=7)]
-        dep_7 = dep_7.groupby("user_id")["deposit"].sum().reset_index(name="deposit_7_days")
-
-        # ===== 汇总 =====
+        # 汇总今日数据
         dep = df_deposit.groupby("user_id")["deposit"].sum().reset_index()
         wd = df_withdraw.groupby("user_id")["withdraw"].sum().reset_index()
         lg = df_login.groupby("user_id")["login_time"].max().reset_index()
 
-        df = dep.merge(wd, on="user_id", how="outer")
-        df = df.merge(lg, on="user_id", how="outer")
+        df_today = dep.merge(wd, on="user_id", how="outer")
+        df_today = df_today.merge(lg, on="user_id", how="outer")
 
-        df = df.merge(login_7, on="user_id", how="left")
-        df = df.merge(dep_7, on="user_id", how="left")
+        # ===== 合并历史 =====
+        df_all = pd.concat([history_df, df_today])
 
-        df["deposit"] = df["deposit"].fillna(0)
-        df["withdraw"] = df["withdraw"].fillna(0)
-        df["login_7_days"] = df["login_7_days"].fillna(0)
-        df["deposit_7_days"] = df["deposit_7_days"].fillna(0)
+        df_all = df_all.groupby("user_id").agg({
+            "deposit":"sum",
+            "withdraw":"sum",
+            "login_time":"max"
+        }).reset_index()
 
-        df["login_time"] = pd.to_datetime(df["login_time"], errors="coerce")
+        df_all.to_csv(DATA_FILE, index=False)
 
-        # ===== 历史合并 =====
-        if not history_df.empty:
-            df = pd.concat([history_df, df])
-            df = df.groupby("user_id").agg({
-                "deposit":"sum",
-                "withdraw":"sum",
-                "login_time":"max",
-                "login_7_days":"max",
-                "deposit_7_days":"sum"
-            }).reset_index()
+        st.success("✅ 数据已更新")
 
-        df.to_csv(DATA_FILE, index=False)
+# ======================
+# 读取最新数据
+# ======================
+if os.path.exists(DATA_FILE):
 
-        # ===== 不登录天数 =====
-        df["不登录天数"] = (now - df["login_time"]).dt.days
-        df["不登录天数"] = df["不登录天数"].fillna(999)
+    df = pd.read_csv(DATA_FILE)
+    df["login_time"] = pd.to_datetime(df["login_time"], errors="coerce")
 
-        # ===== 风控 =====
-        def risk(row):
-            if row["login_7_days"] >= 5 and row["deposit_7_days"] < 100:
-                return "羊毛党"
-            if row["login_7_days"] >= 6 and row["deposit_7_days"] < 150:
-                return "疑似套利"
-            if row["withdraw"] > row["deposit"]:
-                return "高风险"
-            return "正常"
+    # ===== 不登录天数 =====
+    df["不登录天数"] = (now - df["login_time"]).dt.days
+    df["不登录天数"] = df["不登录天数"].fillna(999)
 
-        df["风险标签"] = df.apply(risk, axis=1)
+    # ===== VIP =====
+    def vip(x):
+        if x > 100000: return "VIP5"
+        elif x > 50000: return "VIP4"
+        elif x > 10000: return "VIP3"
+        elif x > 3000: return "VIP2"
+        elif x > 500: return "VIP1"
+        return "普通"
 
-        # ===== VIP =====
-        def vip(x):
-            if x > 100000: return "VIP5"
-            elif x > 50000: return "VIP4"
-            elif x > 10000: return "VIP3"
-            elif x > 3000: return "VIP2"
-            elif x > 500: return "VIP1"
-            return "普通"
+    df["VIP等级"] = df["deposit"].apply(vip)
 
-        df["VIP等级"] = df["deposit"].apply(vip)
+    # ===== 风控 =====
+    def risk(row):
+        if row["deposit"] < 100 and row["不登录天数"] < 1:
+            return "羊毛党"
+        if row["withdraw"] > row["deposit"]:
+            return "高风险"
+        return "正常"
 
-        # ===== 分类 =====
-        def classify(row):
-            if row["风险标签"] == "羊毛党":
-                return "异常"
-            if row["不登录天数"] >= 3 and row["deposit_7_days"] == 0:
-                return "流失"
-            if row["login_7_days"] >= 3:
-                return "活跃"
-            return "普通"
+    df["风险标签"] = df.apply(risk, axis=1)
 
-        df["等级"] = df.apply(classify, axis=1)
+    # ===== 等级 =====
+    def classify(row):
+        if row["不登录天数"] >= 3:
+            return "流失"
+        if row["不登录天数"] <= 1:
+            return "活跃"
+        return "普通"
 
-        # ===== 奖励比例 =====
-        def ratio(row):
-            if row["风险标签"] == "羊毛党":
-                return [0,0,0]
-            if row["VIP等级"] in ["VIP4","VIP5"]:
-                return [0.06,0.08,0.10]
-            if row["等级"] == "流失":
-                return [0.08,0.10,0.12]
-            return [0.05,0.07,0.09]
+    df["等级"] = df.apply(classify, axis=1)
 
-        tiers = [100,300,1000]
+    # ======================
+    # 🎯 冻结彩金任务 (核心)
+    # ======================
+    tiers = [100,300,1000]
 
-        def calc_bonus(row):
-            r = ratio(row)
-            return [tiers[0]*r[0], tiers[1]*r[1], tiers[2]*r[2]]
+    def task_plan(row):
 
-        df["奖励方案"] = df.apply(calc_bonus, axis=1)
+        if row["风险标签"] == "羊毛党":
+            return []
 
-        # ===== 打码 =====
-        def turnover(row):
-            if row["VIP等级"] in ["VIP4","VIP5"]:
-                return 3
-            if row["风险标签"] == "疑似套利":
-                return 8
-            return 5
+        # VIP
+        if row["VIP等级"] in ["VIP4","VIP5"]:
+            rewards = [10,30,120]
+        # 风险
+        elif row["风险标签"] == "高风险":
+            rewards = [3,10,50]
+        # 普通
+        else:
+            rewards = [5,20,90]
 
-        df["打码倍数"] = df.apply(turnover, axis=1)
+        plans = []
+        for i in range(3):
+            need = tiers[i]
+            current = row["deposit"]
 
-        # ===== 建议 =====
-        def action(row):
-            if row["风险标签"] == "羊毛党":
-                return "禁止奖励"
-            if row["等级"] == "流失":
-                return "发大额优惠拉回"
-            if row["VIP等级"] in ["VIP4","VIP5"]:
-                return "重点维护"
-            return "正常维护"
+            if current >= need:
+                status = "已完成"
+                remain = 0
+            else:
+                remain = need - current
+                status = f"还差{remain}"
 
-        df["维护建议"] = df.apply(action, axis=1)
+            plans.append({
+                "档位": need,
+                "奖励": rewards[i],
+                "状态": status,
+                "还差": remain
+            })
 
-        # ===== Dashboard =====
-        st.header("📊 数据总览")
+        return plans
 
-        c1,c2,c3 = st.columns(3)
-        c1.metric("总充值", int(df["deposit"].sum()))
-        c2.metric("总提现", int(df["withdraw"].sum()))
-        c3.metric("净利润", int(df["deposit"].sum() - df["withdraw"].sum()))
+    df["任务"] = df.apply(task_plan, axis=1)
 
-        # ===== 搜索 =====
-        uid = st.text_input("🔍 搜索用户ID")
-        if uid:
-            st.dataframe(df[df["user_id"] == int(uid)])
+    # ======================
+    # 🎯 今日需要跟进
+    # ======================
+    def need_follow(row):
 
-        # ===== 风险 =====
-        st.header("⚠️ 风险用户")
-        st.dataframe(df[df["风险标签"] != "正常"])
+        if row["风险标签"] == "羊毛党":
+            return False
 
-        # ===== 全部 =====
-        st.header("全部数据")
-        st.dataframe(df)
+        # gần mốc
+        if row["deposit"] < 300 and row["deposit"] > 100:
+            return True
+
+        # sắp bỏ
+        if row["不登录天数"] >= 2:
+            return True
+
+        return False
+
+    df["今日需跟进"] = df.apply(need_follow, axis=1)
+
+    # ======================
+    # 📊 Dashboard
+    # ======================
+    st.header("📊 今日概况")
+
+    c1,c2,c3 = st.columns(3)
+    c1.metric("总充值", int(df["deposit"].sum()))
+    c2.metric("总提现", int(df["withdraw"].sum()))
+    c3.metric("需跟进用户", int(df["今日需跟进"].sum()))
+
+    # ======================
+    # 🔥 今日跟进用户
+    # ======================
+    st.header("🔥 今日需跟进用户")
+
+    follow_df = df[df["今日需跟进"] == True]
+
+    st.dataframe(follow_df)
+
+    # ======================
+    # 📥 导出
+    # ======================
+    st.download_button(
+        "📥 下载今日跟进用户",
+        follow_df.to_csv(index=False).encode("utf-8"),
+        "today_follow.csv",
+        "text/csv"
+    )
+
+    # ======================
+    # 🚨 风险
+    # ======================
+    st.header("⚠️ 风险用户")
+
+    st.dataframe(df[df["风险标签"] != "正常"])
+
+    # ======================
+    # 📂 全部
+    # ======================
+    st.header("全部数据")
+
+    st.dataframe(df)
