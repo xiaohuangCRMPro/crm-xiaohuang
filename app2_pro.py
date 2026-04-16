@@ -1,214 +1,168 @@
 import streamlit as st
 import pandas as pd
 import os
-import time
 
-st.set_page_config(page_title="后台管理系统", layout="wide")
-st.title("后台管理系统")
+st.set_page_config(layout="wide")
+st.title("🔥 后台管理系统 PRO")
 
 DATA_FILE = "history.csv"
 
-# =========================
-# 读取历史
-# =========================
+# ======================
+# Load history
+# ======================
 if os.path.exists(DATA_FILE):
     history_df = pd.read_csv(DATA_FILE)
     history_df["login_time"] = pd.to_datetime(history_df["login_time"], errors="coerce")
 else:
     history_df = pd.DataFrame()
 
-# =========================
-# 工具函数
-# =========================
+# ======================
+# Fix date
+# ======================
 def fix_date(col):
     return pd.to_datetime(
         col.astype(str)
-        .str.replace("年", "-")
-        .str.replace("月", "-")
-        .str.replace("日", ""),
+        .str.replace("年","-")
+        .str.replace("月","-")
+        .str.replace("日",""),
         errors="coerce"
     )
 
-def safe_rename(df, cols):
-    df = df.copy()
-    if len(df.columns) >= len(cols):
-        df.columns = cols
-    return df
+# ======================
+# Upload
+# ======================
+st.header("📂 上传数据")
 
-# =========================
-# 上传
-# =========================
-st.header("上传数据")
+deposit_file = st.file_uploader("充值", type=["xlsx"])
+withdraw_file = st.file_uploader("提现", type=["xlsx"])
+login_file = st.file_uploader("登录", type=["xlsx"])
 
-deposit_file = st.file_uploader("上传充值数据", type=["xlsx"])
-withdraw_file = st.file_uploader("上传提现数据", type=["xlsx"])
-login_file = st.file_uploader("上传登录数据", type=["xlsx"])
-
-# =========================
-# 分析按钮
-# =========================
+# ======================
+# Start
+# ======================
 if deposit_file and withdraw_file and login_file:
 
-    if st.button("开始分析"):
+    if st.button("🚀 开始分析"):
 
-        progress = st.progress(0)
+        df_deposit = pd.read_excel(deposit_file)
+        df_withdraw = pd.read_excel(withdraw_file)
+        df_login = pd.read_excel(login_file)
 
-        try:
-            # =========================
-            # 读取
-            # =========================
-            progress.progress(10)
-            df_deposit = pd.read_excel(deposit_file)
-            df_withdraw = pd.read_excel(withdraw_file)
-            df_login = pd.read_excel(login_file)
+        df_deposit.columns = ["user_id","deposit","time"]
+        df_withdraw.columns = ["user_id","withdraw","time"]
+        df_login.columns = ["user_id","login_time"]
 
-            # =========================
-            # 重命名（防报错）
-            # =========================
-            progress.progress(20)
-            df_deposit = safe_rename(df_deposit, ["user_id", "deposit", "time"])
-            df_withdraw = safe_rename(df_withdraw, ["user_id", "withdraw", "time"])
-            df_login = safe_rename(df_login, ["user_id", "login_time"])
+        df_deposit["time"] = fix_date(df_deposit["time"])
+        df_withdraw["time"] = fix_date(df_withdraw["time"])
+        df_login["login_time"] = fix_date(df_login["login_time"])
 
-            # =========================
-            # 修复时间
-            # =========================
-            progress.progress(40)
-            if "time" in df_deposit:
-                df_deposit["time"] = fix_date(df_deposit["time"])
-            if "time" in df_withdraw:
-                df_withdraw["time"] = fix_date(df_withdraw["time"])
-            if "login_time" in df_login:
-                df_login["login_time"] = fix_date(df_login["login_time"])
+        # 去重
+        df_deposit = df_deposit.drop_duplicates()
+        df_withdraw = df_withdraw.drop_duplicates()
+        df_login = df_login.drop_duplicates()
 
-            # =========================
-            # 汇总
-            # =========================
-            progress.progress(60)
+        # 汇总
+        dep = df_deposit.groupby("user_id")["deposit"].sum().reset_index()
+        wd = df_withdraw.groupby("user_id")["withdraw"].sum().reset_index()
+        lg = df_login.groupby("user_id")["login_time"].max().reset_index()
 
-            deposit_sum = df_deposit.groupby("user_id")["deposit"].sum().reset_index() \
-                if "deposit" in df_deposit else pd.DataFrame()
+        df = dep.merge(wd, on="user_id", how="outer")
+        df = df.merge(lg, on="user_id", how="outer")
 
-            withdraw_sum = df_withdraw.groupby("user_id")["withdraw"].sum().reset_index() \
-                if "withdraw" in df_withdraw else pd.DataFrame()
+        df["deposit"] = df["deposit"].fillna(0)
+        df["withdraw"] = df["withdraw"].fillna(0)
+        df["login_time"] = pd.to_datetime(df["login_time"], errors="coerce")
 
-            last_login = df_login.groupby("user_id")["login_time"].max().reset_index() \
-                if "login_time" in df_login else pd.DataFrame()
+        # merge history
+        if not history_df.empty:
+            df = pd.concat([history_df, df])
+            df = df.groupby("user_id").agg({
+                "deposit":"sum",
+                "withdraw":"sum",
+                "login_time":"max"
+            }).reset_index()
 
-            # =========================
-            # 合并
-            # =========================
-            progress.progress(75)
+        df.to_csv(DATA_FILE, index=False)
 
-            df = pd.merge(deposit_sum, withdraw_sum, on="user_id", how="outer")
-            df = pd.merge(df, last_login, on="user_id", how="outer")
+        # days inactive
+        df["不登录天数"] = (pd.Timestamp.now() - df["login_time"]).dt.days
+        df["不登录天数"] = df["不登录天数"].fillna(999)
 
-            # =========================
-            # 修复空值（关键）
-            # =========================
-            df["deposit"] = df.get("deposit", 0).fillna(0)
-            df["withdraw"] = df.get("withdraw", 0).fillna(0)
+        # classify
+        def classify(r):
+            if r["deposit"]>50000 and r["不登录天数"]<=3:
+                return "VIP"
+            elif r["不登录天数"]<=3:
+                return "活跃"
+            elif r["不登录天数"]<=7:
+                return "警告"
+            elif r["withdraw"]>r["deposit"]:
+                return "风险"
+            else:
+                return "流失"
 
-            # login_time 不填0 ❗
-            df["login_time"] = pd.to_datetime(df.get("login_time"), errors="coerce")
+        df["等级"] = df.apply(classify, axis=1)
 
-            # =========================
-            # 合并历史
-            # =========================
-            if not history_df.empty:
-                df = pd.concat([history_df, df])
+        # suggestion
+        def action(r):
+            if r["等级"]=="VIP":
+                return "送5%奖金 + 专属客服"
+            elif r["等级"]=="流失":
+                return "发消息 + 送彩金20%"
+            elif r["等级"]=="风险":
+                return "减少奖励 + 观察"
+            else:
+                return "正常维护"
 
-                df = df.groupby("user_id").agg({
-                    "deposit": "sum",
-                    "withdraw": "sum",
-                    "login_time": "max"
-                }).reset_index()
+        df["维护建议"] = df.apply(action, axis=1)
 
-            # 保存
-            df.to_csv(DATA_FILE, index=False)
+        # ======================
+        # DASHBOARD
+        # ======================
+        st.header("📊 数据总览")
 
-            # =========================
-            # 不登录天数
-            # =========================
-            progress.progress(85)
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("总充值", int(df["deposit"].sum()))
+        c2.metric("总提现", int(df["withdraw"].sum()))
+        c3.metric("净盈利", int(df["deposit"].sum()-df["withdraw"].sum()))
+        c4.metric("用户数", len(df))
 
-            df["不登录天数"] = (pd.Timestamp.now() - df["login_time"]).dt.days
-            df["不登录天数"] = df["不登录天数"].fillna(999)
+        # ======================
+        # 搜索
+        # ======================
+        uid = st.text_input("🔍 搜索用户ID")
+        if uid:
+            st.dataframe(df[df["user_id"]==int(uid)])
 
-            # =========================
-            # 分类
-            # =========================
-            def classify(row):
-                if row["deposit"] > 50000 and row["不登录天数"] <= 3:
-                    return "VIP用户"
-                elif row["不登录天数"] <= 3:
-                    return "活跃用户"
-                elif row["不登录天数"] <= 7:
-                    return "警告用户"
-                elif row["withdraw"] > row["deposit"]:
-                    return "风险用户"
-                else:
-                    return "流失用户"
+        # ======================
+        # Tabs
+        # ======================
+        st.header("用户分类")
 
-            df["用户等级"] = df.apply(classify, axis=1)
+        t1,t2,t3,t4 = st.tabs(["VIP","活跃","流失","风险"])
 
-            # =========================
-            # 奖金
-            # =========================
-            progress.progress(95)
+        t1.dataframe(df[df["等级"]=="VIP"])
+        t2.dataframe(df[df["等级"]=="活跃"])
+        t3.dataframe(df[df["等级"]=="流失"])
+        t4.dataframe(df[df["等级"]=="风险"])
 
-            def bonus(row):
-                if row["不登录天数"] <= 3:
-                    return row["deposit"] * 0.05
-                elif row["不登录天数"] <= 7:
-                    return row["deposit"] * 0.1
-                else:
-                    return row["deposit"] * 0.2
+        # ======================
+        # 警告
+        # ======================
+        danger = df[df["withdraw"]>df["deposit"]]
+        if not danger.empty:
+            st.error(f"⚠️ 风险用户: {len(danger)}")
 
-            df["建议奖金"] = df.apply(bonus, axis=1)
+        # ======================
+        # chart
+        # ======================
+        st.header("📈 充值趋势")
+        df_deposit["date"] = df_deposit["time"].dt.date
+        chart = df_deposit.groupby("date")["deposit"].sum()
+        st.line_chart(chart)
 
-            progress.progress(100)
-            st.success("分析完成")
-
-            # =========================
-            # 显示
-            # =========================
-            st.dataframe(df)
-
-            # =========================
-            # 筛选
-            # =========================
-            st.header("筛选用户")
-            days = st.slider("不登录天数 >=", 0, 30, 3)
-            st.dataframe(df[df["不登录天数"] >= days])
-
-            # =========================
-            # 下载
-            # =========================
-            st.download_button(
-                "下载结果",
-                df.to_csv(index=False).encode("utf-8"),
-                "result.csv",
-                "text/csv"
-            )
-
-        except Exception as e:
-            st.error(f"系统错误: {e}")
-
-# =========================
-# 历史数据
-# =========================
-st.header("历史数据")
-
-if not history_df.empty:
-    st.dataframe(history_df)
-else:
-    st.write("暂无历史数据")
-
-# =========================
-# 清空
-# =========================
-if st.button("清空历史数据"):
-    if os.path.exists(DATA_FILE):
-        os.remove(DATA_FILE)
-    st.success("已清空")
+        # ======================
+        # full table
+        # ======================
+        st.header("全部数据")
+        st.dataframe(df)
